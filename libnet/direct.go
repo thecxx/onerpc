@@ -23,8 +23,12 @@ import (
 
 // DirectDial
 func DirectDial(network, addr string, timeout time.Duration) transport.DialFunc {
-	return func() (conn net.Conn, err error) {
-		return net.DialTimeout(network, addr, timeout)
+	return func(someone uint64) (conn net.Conn, uniqid uint64, err error) {
+		conn, err = net.DialTimeout(network, addr, timeout)
+		if err == nil {
+			uniqid = 1
+		}
+		return
 	}
 }
 

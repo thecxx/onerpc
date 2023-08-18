@@ -23,7 +23,7 @@ import (
 
 // ServiceDial
 func (c *Cluster) ServiceDial(srvname string, timeout time.Duration) transport.DialFunc {
-	return func() (conn net.Conn, err error) { return }
+	return func(someone uint64) (conn net.Conn, uniqid uint64, err error) { return }
 }
 
 type Cluster struct {

@@ -23,11 +23,23 @@ import (
 	"time"
 )
 
+const (
+	// Dial to anyone
+	Anyone uint64 = 0
+)
+
+var (
+	ErrNoIdleServerFound = errors.New("no idle server found")
+)
+
 // Listen
 type ListenFunc func() (listener net.Listener, err error)
 
-// Dial
-type DialFunc func() (conn net.Conn, err error)
+// Dial to someone
+type DialFunc func(someone uint64) (conn net.Conn, uniqid uint64, err error)
+
+// New packet
+type PacketFunc func() Packet
 
 // Event handler
 type EventHandler interface {
@@ -35,18 +47,16 @@ type EventHandler interface {
 }
 
 type Transport struct {
-	IdleTimeout      time.Duration
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
-	LifeTime         time.Duration
+	IdleTimeout      time.Duration
+	MaxLifeTime      time.Duration
 	ReaderBufferSize int
 	WriterBufferSize int
 	Dial             DialFunc
 	Packet           PacketFunc
 	Event            EventHandler
 
-	initial []*Connection
-	expired []*Connection
 	workers []*Connection
 
 	// squeue chan Packet
@@ -64,8 +74,8 @@ type Transport struct {
 // Start
 func (t *Transport) Start(ctx context.Context) {
 	t.ctx, t.cancel = context.WithCancel(ctx)
-	t.rqueue = make(chan *Receiver, 1024)
 	t.workers = make([]*Connection, 0, 1024)
+	t.rqueue = make(chan *Receiver, 1024)
 	// Handle foreign packet
 	go t.handleForeignPacket()
 }
@@ -106,13 +116,14 @@ func (t *Transport) Async(ctx context.Context, sp Packet, fn func(rp Packet, err
 // }
 
 // Join
-func (t *Transport) Join(conn net.Conn) {
-	t.join(conn)
+func (t *Transport) Join(conn net.Conn, uniqid uint64) {
+	t.join(conn, uniqid)
 }
 
 // join
-func (t *Transport) join(conn net.Conn) {
+func (t *Transport) join(conn net.Conn, uniqid uint64) {
 	c := new(Connection)
+	c.UniqID = uniqid
 
 	// Connection and Packet
 	c.Conn = conn
@@ -122,7 +133,7 @@ func (t *Transport) join(conn net.Conn) {
 	c.IdleTimeout = t.IdleTimeout
 	c.ReadTimeout = t.ReadTimeout
 	c.WriteTimeout = t.WriteTimeout
-	c.LifeTime = t.LifeTime
+	c.MaxLifeTime = t.MaxLifeTime
 	c.ReaderBufferSize = t.ReaderBufferSize
 	c.WriterBufferSize = t.WriterBufferSize
 

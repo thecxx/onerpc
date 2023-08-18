@@ -22,11 +22,11 @@ import (
 	"time"
 )
 
-// New packet
-type PacketFunc func() Packet
-
 // Connection
 type Connection struct {
+
+	// Uniq ID
+	UniqID uint64
 
 	// Standard connection
 	Conn net.Conn
@@ -40,7 +40,7 @@ type Connection struct {
 	WriteTimeout time.Duration
 
 	// Connection lifetime
-	LifeTime time.Duration
+	MaxLifeTime time.Duration
 
 	// Reader/Writer buffer
 	ReaderBufferSize int
@@ -57,10 +57,10 @@ type Connection struct {
 
 // Start
 func (c *Connection) Start(ctx context.Context) {
-	if c.LifeTime <= 0 {
+	if c.MaxLifeTime <= 0 {
 		c.ctx, c.cancel = context.WithCancel(ctx)
 	} else {
-		c.ctx, c.cancel = context.WithTimeout(ctx, c.LifeTime)
+		c.ctx, c.cancel = context.WithTimeout(ctx, c.MaxLifeTime)
 	}
 	// Handle foreign packet
 	go c.handleForeignPacket()

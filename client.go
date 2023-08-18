@@ -23,45 +23,98 @@ import (
 )
 
 type Client struct {
-	ReaderBufferSize int
-	WriterBufferSize int
-	transport        transport.Transport
-	dial             transport.DialFunc
-	packet           transport.PacketFunc
+	transport transport.Transport
+	dial      transport.DialFunc
+	packet    transport.PacketFunc
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 // NewClient
-func NewClient(dial transport.DialFunc, packet transport.PacketFunc) (c *Client) {
-	return &Client{
-		ReaderBufferSize: 1024,
-		WriterBufferSize: 1024,
-		dial:             dial,
-		packet:           packet,
+func NewClient(dial transport.DialFunc, packet transport.PacketFunc, opts ...Option) (c *Client) {
+	c = &Client{
+		dial:   dial,
+		packet: packet,
 	}
+	// Set options
+	for _, setOpt := range opts {
+		setOpt(c)
+	}
+	// Option: ReadTimeout
+	if c.transport.ReadTimeout < 0 {
+		c.transport.ReadTimeout = 3 * time.Second
+	}
+	// Option: WriteTimeout
+	if c.transport.WriteTimeout < 0 {
+		c.transport.WriteTimeout = 3 * time.Second
+	}
+	// Option: IdleTimeout
+	if c.transport.IdleTimeout < 0 {
+		c.transport.IdleTimeout = 10 * time.Second
+	}
+	// Option: MaxLifeTime
+	if c.transport.MaxLifeTime < 0 {
+		c.transport.MaxLifeTime = 0
+	}
+	// Option: ReaderBufferSize
+	if c.transport.ReaderBufferSize < 0 {
+		c.transport.ReaderBufferSize = 10 * 1024
+	}
+	// Option: WriterBufferSize
+	if c.transport.WriterBufferSize < 0 {
+		c.transport.WriterBufferSize = 10 * 1024
+	}
+
+	c.transport.Event = c
+	c.transport.Dial = c.dial
+	c.transport.Packet = c.packet
+
+	return
+}
+
+// SetReadTimeout implements CanOption.
+func (c *Client) SetReadTimeout(timeout time.Duration) {
+	c.transport.ReadTimeout = timeout
+}
+
+// SetWriteTimeout implements CanOption.
+func (c *Client) SetWriteTimeout(timeout time.Duration) {
+	c.transport.WriteTimeout = timeout
+}
+
+// SetIdleTimeout implements CanOption.
+func (c *Client) SetIdleTimeout(timeout time.Duration) {
+	c.transport.IdleTimeout = timeout
+}
+
+// SetMaxLifeTime implements CanOption.
+func (c *Client) SetMaxLifeTime(timeout time.Duration) {
+	c.transport.MaxLifeTime = timeout
+}
+
+// SetReaderBufferSize implements CanOption.
+func (c *Client) SetReaderBufferSize(size int) {
+	c.transport.ReaderBufferSize = size
+}
+
+// SetWriterBufferSize implements CanOption.
+func (c *Client) SetWriterBufferSize(size int) {
+	c.transport.WriterBufferSize = size
 }
 
 // Connect
 func (c *Client) Connect() (err error) {
-	conn, err := c.dial()
+	conn, uniqid, err := c.dial(transport.Anyone)
 	if err != nil {
 		return
 	}
 
-	c.transport.IdleTimeout = 10 * time.Second
-	c.transport.ReadTimeout = 3 * time.Second
-	c.transport.WriteTimeout = 3 * time.Second
-	// c.transport.LifeTime = 600 * time.Second
-	c.transport.ReaderBufferSize = c.ReaderBufferSize
-	c.transport.WriterBufferSize = c.WriterBufferSize
-	c.transport.Dial = c.dial
-	c.transport.Packet = c.packet
-	c.transport.Event = c
-
-	// Transport
-	c.transport.Start(context.TODO())
+	// Start Transport
+	c.ctx, c.cancel = context.WithCancel(context.Background())
+	c.transport.Start(c.ctx)
 
 	// First connection
-	c.transport.Join(conn)
+	c.transport.Join(conn, uniqid)
 
 	return
 }
