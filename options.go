@@ -16,6 +16,8 @@ package onerpc
 
 import (
 	"time"
+
+	"github.com/govoltron/onerpc/transport"
 )
 
 type CanOption interface {
@@ -37,6 +39,9 @@ type CanOption interface {
 
 	// SetWriterBufferSize
 	SetWriterBufferSize(size int)
+
+	// SetBalancer
+	SetBalancer(b transport.Balancer)
 }
 
 type Option func(setter CanOption)
@@ -69,4 +74,9 @@ func WithReaderBufferSize(size int) Option {
 // WithWriterBufferSize
 func WithWriterBufferSize(size int) Option {
 	return func(setter CanOption) { setter.SetWriterBufferSize(size) }
+}
+
+// WithBalancer
+func WithBalancer(b transport.Balancer) Option {
+	return func(setter CanOption) { setter.SetBalancer(b) }
 }

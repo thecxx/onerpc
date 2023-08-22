@@ -24,16 +24,16 @@ import (
 
 type Client struct {
 	transport transport.Transport
-	dial      transport.DialFunc
+	dialer    transport.Dialer
 	packet    transport.PacketFunc
 	ctx       context.Context
 	cancel    context.CancelFunc
 }
 
 // NewClient
-func NewClient(dial transport.DialFunc, packet transport.PacketFunc, opts ...Option) (c *Client) {
+func NewClient(dialer transport.Dialer, packet transport.PacketFunc, opts ...Option) (c *Client) {
 	c = &Client{
-		dial:   dial,
+		dialer: dialer,
 		packet: packet,
 	}
 	// Set options
@@ -66,7 +66,6 @@ func NewClient(dial transport.DialFunc, packet transport.PacketFunc, opts ...Opt
 	}
 
 	c.transport.Event = c
-	c.transport.Dial = c.dial
 	c.transport.Packet = c.packet
 
 	return
@@ -102,19 +101,26 @@ func (c *Client) SetWriterBufferSize(size int) {
 	c.transport.WriterBufferSize = size
 }
 
+// SetBalancer implements CanOption.
+func (c *Client) SetBalancer(b transport.Balancer) {
+	c.transport.Balancer = b
+}
+
 // Connect
 func (c *Client) Connect() (err error) {
-	conn, uniqid, err := c.dial(transport.Anyone)
+	conn, weight, hang, err := c.dialer.Dial()
 	if err != nil {
 		return
 	}
+
+	c.transport.Dialer = c.dialer
 
 	// Start Transport
 	c.ctx, c.cancel = context.WithCancel(context.Background())
 	c.transport.Start(c.ctx)
 
 	// First connection
-	c.transport.Join(conn, uniqid)
+	c.transport.Join(conn, weight, hang)
 
 	return
 }

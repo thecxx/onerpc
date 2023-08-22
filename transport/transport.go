@@ -24,19 +24,23 @@ import (
 )
 
 const (
-	// Dial to anyone
-	Anyone uint64 = 0
+	WeightNormal int = 100
 )
 
 var (
 	ErrNoIdleServerFound = errors.New("no idle server found")
 )
 
-// Listen
-type ListenFunc func() (listener net.Listener, err error)
+// Listener
+type Listener interface {
+	Listen() (ln net.Listener, err error)
+}
 
-// Dial to someone
-type DialFunc func(someone uint64) (conn net.Conn, uniqid uint64, err error)
+// Dialer
+type Dialer interface {
+	Dial() (conn net.Conn, weight int, hang chan struct{}, err error)
+	Hang(conn net.Conn)
+}
 
 // New packet
 type PacketFunc func() Packet
@@ -46,6 +50,12 @@ type EventHandler interface {
 	OnPacket(ctx context.Context, rp Packet) (sp Packet, err error)
 }
 
+type Balancer interface {
+	Add(c *Connection, weight int)
+	Next() (c *Connection)
+	Remove(c *Connection)
+}
+
 type Transport struct {
 	ReadTimeout      time.Duration
 	WriteTimeout     time.Duration
@@ -53,14 +63,16 @@ type Transport struct {
 	MaxLifeTime      time.Duration
 	ReaderBufferSize int
 	WriterBufferSize int
-	Dial             DialFunc
+	Dialer           Dialer
 	Packet           PacketFunc
 	Event            EventHandler
+	Balancer         Balancer
 
-	workers []*Connection
+	workers map[*Connection]time.Time
 
-	// squeue chan Packet
+	// Queues
 	rqueue chan *Receiver
+	dqueue chan *Connection
 
 	// Pending
 	pendings sync.Map
@@ -74,7 +86,7 @@ type Transport struct {
 // Start
 func (t *Transport) Start(ctx context.Context) {
 	t.ctx, t.cancel = context.WithCancel(ctx)
-	t.workers = make([]*Connection, 0, 1024)
+	t.workers = make(map[*Connection]time.Time)
 	t.rqueue = make(chan *Receiver, 1024)
 	// Handle foreign packet
 	go t.handleForeignPacket()
@@ -82,7 +94,7 @@ func (t *Transport) Start(ctx context.Context) {
 
 // Stop
 func (t *Transport) Stop() {
-	for _, c := range t.workers {
+	for c, _ := range t.workers {
 		c.Stop()
 	}
 	t.cancel()
@@ -90,6 +102,7 @@ func (t *Transport) Stop() {
 
 // Broadcast
 func (t *Transport) Broadcast(ctx context.Context, sp Packet) (err error) {
+	sp.SetOneway()
 	return t.broadcast(ctx, sp)
 }
 
@@ -103,28 +116,18 @@ func (t *Transport) Async(ctx context.Context, sp Packet, fn func(rp Packet, err
 	t.send(ctx, sp, fn)
 }
 
-// // connect
-// func (t *Transport) connect() (c *Connection, err error) {
-// 	conn, err := t.Dial(t.DialTimeout)
-// 	if err != nil {
-// 		return
-// 	}
-// 	// join
-// 	t.join(conn)
-
-// 	return
-// }
-
 // Join
-func (t *Transport) Join(conn net.Conn, uniqid uint64) {
-	t.join(conn, uniqid)
+func (t *Transport) Join(conn net.Conn, weight int, hang chan struct{}) {
+	t.join(conn, weight, hang)
 }
 
 // join
-func (t *Transport) join(conn net.Conn, uniqid uint64) {
+func (t *Transport) join(conn net.Conn, weight int, hang chan struct{}) {
 	c := new(Connection)
-	c.UniqID = uniqid
 
+	c.Weight = weight
+
+	c.Hang = hang
 	// Connection and Packet
 	c.Conn = conn
 	c.Packet = t.Packet
@@ -138,24 +141,50 @@ func (t *Transport) join(conn net.Conn, uniqid uint64) {
 	c.WriterBufferSize = t.WriterBufferSize
 
 	// Queue
+	c.DQueue = t.dqueue
 	c.RQueue = t.rqueue
 
 	t.locker.Lock()
-	t.workers = append(t.workers, c)
+	t.workers[c] = time.Now()
+	if t.Balancer != nil {
+		t.Balancer.Add(c, weight)
+	}
 	t.locker.Unlock()
 
 	c.Start(t.ctx)
 }
 
-// // discard
-// func (t *Transport) discard(c *Connection) {
-// 	for i := 0; i < len(t.workers); i++ {
-// 		if c == t.workers[i] {
-// 			t.workers = append(t.workers[0:i], t.workers[i+1:]...)
-// 			break
-// 		}
-// 	}
-// }
+// discard
+func (t *Transport) discard(c *Connection) {
+	t.locker.Lock()
+	defer t.locker.Unlock()
+	// Delete
+	delete(t.workers, c)
+	if t.Balancer != nil {
+		t.Balancer.Remove(c)
+	}
+}
+
+// tryDial
+func (t *Transport) tryDial() {
+	if t.Dialer == nil {
+		return
+	}
+	conn, weight, hang, err := t.Dialer.Dial()
+	if err != nil {
+		// TODO
+	} else {
+		t.join(conn, weight, hang)
+	}
+}
+
+// hang
+func (t *Transport) hang(c *Connection) {
+	if t.Dialer == nil {
+		return
+	}
+	t.Dialer.Hang(c.Conn)
+}
 
 // seq
 func (t *Transport) seq() (seq uint64) {
@@ -167,6 +196,12 @@ func (t *Transport) seq() (seq uint64) {
 
 // broadcast
 func (t *Transport) broadcast(ctx context.Context, sp Packet) (err error) {
+	t.locker.RLock()
+	defer t.locker.RUnlock()
+	// Broadcast
+	for c, _ := range t.workers {
+		c.Send(sp)
+	}
 	return
 }
 
@@ -221,7 +256,7 @@ func (t *Transport) send(ctx context.Context, sp Packet, fn func(rp Packet, err 
 func (t *Transport) gogogo(sender *Sender) {
 	sp := sender.SP
 
-	if c, ok := t.selectWorker(); !ok {
+	if c := t.selectWorker(); c == nil {
 		sender.Ack(nil, errors.New("no worker found"))
 	} else {
 		if _, err := c.Send(sp); err != nil {
@@ -273,12 +308,12 @@ func (t *Transport) noSender(receiver *Receiver) {
 }
 
 // selectWorker
-func (t *Transport) selectWorker() (c *Connection, ok bool) {
+func (t *Transport) selectWorker() (c *Connection) {
 	t.locker.RLock()
 	defer t.locker.RUnlock()
 	// Select a worker connection
-	if len(t.workers) > 0 {
-		c, ok = t.workers[0], true
+	if t.Balancer != nil {
+		c = t.Balancer.Next()
 	}
 	return
 }
@@ -294,6 +329,9 @@ func (t *Transport) findSender(seq uint64) (sender *Sender, ok bool) {
 
 // handleForeignPacket
 func (t *Transport) handleForeignPacket() {
+	tk := time.NewTicker(time.Second)
+	defer tk.Stop()
+
 	for {
 		select {
 		// Cancel
@@ -302,6 +340,13 @@ func (t *Transport) handleForeignPacket() {
 		// Recv queue
 		case r := <-t.rqueue:
 			t.onRecv(r)
+		// Disconnect queue
+		case c := <-t.dqueue:
+			t.discard(c)
+			t.hang(c)
+		// Join new connection
+		case <-tk.C:
+			t.tryDial()
 		}
 	}
 }

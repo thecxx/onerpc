@@ -17,6 +17,7 @@ package transport
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"time"
@@ -25,19 +26,19 @@ import (
 // Connection
 type Connection struct {
 
-	// Uniq ID
-	UniqID uint64
-
 	// Standard connection
 	Conn net.Conn
+
+	// Weight
+	Weight int
 
 	// New packet
 	Packet PacketFunc
 
 	// Timeout
-	IdleTimeout  time.Duration
 	ReadTimeout  time.Duration
 	WriteTimeout time.Duration
+	IdleTimeout  time.Duration
 
 	// Connection lifetime
 	MaxLifeTime time.Duration
@@ -45,6 +46,12 @@ type Connection struct {
 	// Reader/Writer buffer
 	ReaderBufferSize int
 	WriterBufferSize int
+
+	// Hang
+	Hang chan struct{}
+
+	// Disconnect queue
+	DQueue chan *Connection
 
 	// Recv queue
 	RQueue chan *Receiver
@@ -123,10 +130,20 @@ func (c *Connection) handleForeignPacket() {
 		case <-c.ctx.Done():
 			c.err = c.ctx.Err()
 			break
+		// Hang up
+		case <-c.Hang:
+			c.err = errors.New("hang up")
+			break
 		// Submit to transport
 		case c.RQueue <- &Receiver{RP: rp, OnAck: c.ack}:
 			// In the pipe, five by five!
 		}
 	}
 
+	// Disconnect
+	c.Conn.Close()
+
+	// TODO 未处理完的数据包
+
+	c.DQueue <- c
 }

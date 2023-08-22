@@ -15,15 +15,14 @@
 package onerpc
 
 import (
-	"net"
 	"time"
 
 	"github.com/govoltron/onerpc/transport"
 )
 
-// ServiceDial
-func (c *Cluster) ServiceDial(srvname string, timeout time.Duration) transport.DialFunc {
-	return func(someone uint64) (conn net.Conn, uniqid uint64, err error) { return }
+// NewServiceDialer
+func (c *Cluster) NewServiceDialer(srvname string, timeout time.Duration) (d transport.Dialer) {
+	return
 }
 
 type Cluster struct {

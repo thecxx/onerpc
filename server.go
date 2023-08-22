@@ -26,17 +26,17 @@ import (
 
 type Server struct {
 	transport transport.Transport
-	listen    transport.ListenFunc
+	listener  transport.Listener
 	packet    transport.PacketFunc
 	ctx       context.Context
 	cancel    context.CancelFunc
 }
 
 // NewServer
-func NewServer(listen transport.ListenFunc, packet transport.PacketFunc, opts ...Option) (s *Server) {
+func NewServer(listener transport.Listener, packet transport.PacketFunc, opts ...Option) (s *Server) {
 	s = &Server{
-		listen: listen,
-		packet: packet,
+		listener: listener,
+		packet:   packet,
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -103,9 +103,14 @@ func (s *Server) SetWriterBufferSize(size int) {
 	s.transport.WriterBufferSize = size
 }
 
+// SetBalancer implements CanOption.
+func (s *Server) SetBalancer(b transport.Balancer) {
+	panic("option 'Balancer' not supported")
+}
+
 // Listen
 func (s *Server) Listen() (err error) {
-	l, err := s.listen()
+	ln, err := s.listener.Listen()
 	if err != nil {
 		return
 	}
@@ -115,16 +120,14 @@ func (s *Server) Listen() (err error) {
 	s.transport.Start(s.ctx)
 
 	// Handle foreign connect
-	go s.handleForeignConnect(l)
+	go s.handleForeignConnect(ln)
 
 	return
 }
 
 // Broadcast
 func (s *Server) Broadcast(ctx context.Context, sp transport.Packet) (err error) {
-	sp.SetOneway()
-	_, err = s.transport.Send(ctx, sp)
-	return
+	return s.transport.Broadcast(ctx, sp)
 }
 
 // OnPacket
@@ -144,12 +147,12 @@ func (s *Server) OnPacket(ctx context.Context, rp transport.Packet) (sp transpor
 }
 
 // handleForeignConnect
-func (s *Server) handleForeignConnect(l net.Listener) {
+func (s *Server) handleForeignConnect(ln net.Listener) {
 	for {
-		if conn, err := l.Accept(); err != nil {
+		if conn, err := ln.Accept(); err != nil {
 			break
 		} else {
-			s.transport.Join(conn, 0)
+			s.transport.Join(conn, transport.WeightNormal, nil)
 		}
 	}
 }

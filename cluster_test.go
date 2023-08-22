@@ -31,7 +31,7 @@ func TestCluster_Send(t *testing.T) {
 	// d, err := onerpc.NewEtcdDiscovery()
 	client := onerpc.NewClient(
 		// client.DirectDial("tcp", "127.0.0.1:80"),
-		cluster.ServiceDial("user-core-service", 1*time.Second),
+		cluster.NewServiceDialer("user-core-service", 1*time.Second),
 		func() transport.Packet { return proto.NewPacket() },
 	)
 	err := client.Connect()
@@ -44,16 +44,27 @@ func TestCluster_Send(t *testing.T) {
 }
 
 func TestServer_Start(t *testing.T) {
-	server := onerpc.NewServer(
-		libnet.DirectListen("tcp", ":8080"),
+	server0 := onerpc.NewServer(
+		libnet.NewDirectListener("tcp", ":8080"),
 		func() transport.Packet { return proto.NewPacket() },
 	)
-	err := server.Listen()
+	err := server0.Listen()
 	if err != nil {
 		t.Errorf("Start failed, error is %s", err.Error())
 		return
 	}
-	defer server.Close()
+	defer server0.Close()
+
+	server1 := onerpc.NewServer(
+		libnet.NewDirectListener("tcp", ":8081"),
+		func() transport.Packet { return proto.NewPacket() },
+	)
+	err = server1.Listen()
+	if err != nil {
+		t.Errorf("Start failed, error is %s", err.Error())
+		return
+	}
+	defer server1.Close()
 
 	// server.Broadcast(context.TODO(), protocol.NewPacket())
 
@@ -62,8 +73,9 @@ func TestServer_Start(t *testing.T) {
 
 func TestClient_Send(t *testing.T) {
 	client := onerpc.NewClient(
-		libnet.DirectDial("tcp", "127.0.0.1:8080", 1*time.Second),
+		libnet.NewDirectDialer("tcp", "127.0.0.1:8080", "127.0.0.1:8081"),
 		func() transport.Packet { return proto.NewPacket() },
+		onerpc.WithBalancer(transport.NewWeightRoundRobinBalancer()),
 	)
 	err := client.Connect()
 	if err != nil {
@@ -71,6 +83,8 @@ func TestClient_Send(t *testing.T) {
 		return
 	}
 	defer client.Close()
+
+	time.Sleep(2 * time.Second)
 
 	var wg sync.WaitGroup
 
@@ -93,6 +107,8 @@ func TestClient_Send(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	time.Sleep(5 * time.Second)
 
 	// r, err := client.Send(context.TODO(), sp)
 	// if err != nil {

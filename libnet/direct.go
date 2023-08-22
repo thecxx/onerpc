@@ -15,26 +15,104 @@
 package libnet
 
 import (
+	"errors"
 	"net"
 	"time"
 
 	"github.com/govoltron/onerpc/transport"
 )
 
-// DirectDial
-func DirectDial(network, addr string, timeout time.Duration) transport.DialFunc {
-	return func(someone uint64) (conn net.Conn, uniqid uint64, err error) {
-		conn, err = net.DialTimeout(network, addr, timeout)
-		if err == nil {
-			uniqid = 1
+type DirectContact struct {
+	addr string
+	conn net.Conn
+	hang chan struct{}
+}
+
+type DirectDialer struct {
+	network  string
+	timeout  time.Duration
+	contacts map[string]*DirectContact
+}
+
+// NewDirectDialer
+func NewDirectDialer(network string, addrs ...string) (d *DirectDialer) {
+	return NewDirectDialerWithTimeout(1*time.Second, network, addrs...)
+}
+
+// NewDirectDialerWithTimeout
+func NewDirectDialerWithTimeout(timeout time.Duration, network string, addrs ...string) (d *DirectDialer) {
+	d = &DirectDialer{
+		timeout:  timeout,
+		network:  network,
+		contacts: make(map[string]*DirectContact),
+	}
+	for _, addr := range addrs {
+		d.contacts[addr] = &DirectContact{addr: addr}
+	}
+	return
+}
+
+// Dial implements transport.Dialer.
+func (d *DirectDialer) Dial() (conn net.Conn, weight int, hang chan struct{}, err error) {
+	var (
+		contact *DirectContact
+	)
+	for _, value := range d.contacts {
+		if value.conn == nil {
+			contact = value
+			break
 		}
+	}
+	if contact == nil {
+		return nil, 0, nil, errors.New("no idle contact found")
+	}
+	// Dial
+	if conn, err = net.DialTimeout(d.network, contact.addr, d.timeout); err == nil {
+		weight = transport.WeightNormal
+		hang = make(chan struct{}, 1)
+		contact.conn = conn
+		contact.hang = hang
+	}
+	return
+}
+
+// Hang implements transport.Dialer.
+func (d *DirectDialer) Hang(conn net.Conn) {
+	var (
+		contact *DirectContact
+	)
+	for _, value := range d.contacts {
+		if value.conn != nil && value.conn == conn {
+			contact = value
+			break
+		}
+	}
+	if contact != nil {
+		close(contact.hang)
+		contact.conn = nil
+		contact.hang = nil
 		return
 	}
 }
 
-// DirectListen
-func DirectListen(network, addr string) transport.ListenFunc {
-	return func() (listener net.Listener, err error) {
-		return net.Listen(network, addr)
+type DirectListener struct {
+	network string
+	addr    string
+	ln      net.Listener
+}
+
+// NewDirectListener
+func NewDirectListener(network, addr string) *DirectListener {
+	return &DirectListener{network: network, addr: addr}
+}
+
+// Listen implements transport.Listener.
+func (l *DirectListener) Listen() (ln net.Listener, err error) {
+	if l.ln != nil {
+		return nil, errors.New("already listened")
 	}
+	if ln, err = net.Listen(l.network, l.addr); err == nil {
+		l.ln = ln
+	}
+	return
 }
