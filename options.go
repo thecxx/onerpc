@@ -40,6 +40,9 @@ type CanOption interface {
 	// SetWriterBufferSize
 	SetWriterBufferSize(size int)
 
+	// SetProtocol
+	SetProtocol(p transport.Protocol)
+
 	// SetBalancer
 	SetBalancer(b transport.Balancer)
 }
@@ -74,6 +77,11 @@ func WithReaderBufferSize(size int) Option {
 // WithWriterBufferSize
 func WithWriterBufferSize(size int) Option {
 	return func(setter CanOption) { setter.SetWriterBufferSize(size) }
+}
+
+// WithProtocol
+func WithProtocol(p transport.Protocol) Option {
+	return func(setter CanOption) { setter.SetProtocol(p) }
 }
 
 // WithBalancer

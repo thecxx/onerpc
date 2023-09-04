@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package libnet
+package link
 
 import (
 	"errors"
@@ -22,83 +22,10 @@ import (
 	"github.com/govoltron/onerpc/transport"
 )
 
-type DirectContact struct {
-	addr string
-	conn net.Conn
-	hang chan struct{}
-}
-
-type DirectDialer struct {
-	network  string
-	timeout  time.Duration
-	contacts map[string]*DirectContact
-}
-
-// NewDirectDialer
-func NewDirectDialer(network string, addrs ...string) (d *DirectDialer) {
-	return NewDirectDialerWithTimeout(1*time.Second, network, addrs...)
-}
-
-// NewDirectDialerWithTimeout
-func NewDirectDialerWithTimeout(timeout time.Duration, network string, addrs ...string) (d *DirectDialer) {
-	d = &DirectDialer{
-		timeout:  timeout,
-		network:  network,
-		contacts: make(map[string]*DirectContact),
-	}
-	for _, addr := range addrs {
-		d.contacts[addr] = &DirectContact{addr: addr}
-	}
-	return
-}
-
-// Dial implements transport.Dialer.
-func (d *DirectDialer) Dial() (conn net.Conn, weight int, hang chan struct{}, err error) {
-	var (
-		contact *DirectContact
-	)
-	for _, value := range d.contacts {
-		if value.conn == nil {
-			contact = value
-			break
-		}
-	}
-	if contact == nil {
-		return nil, 0, nil, errors.New("no idle contact found")
-	}
-	// Dial
-	if conn, err = net.DialTimeout(d.network, contact.addr, d.timeout); err == nil {
-		weight = transport.WeightNormal
-		hang = make(chan struct{}, 1)
-		contact.conn = conn
-		contact.hang = hang
-	}
-	return
-}
-
-// Hang implements transport.Dialer.
-func (d *DirectDialer) Hang(conn net.Conn) {
-	var (
-		contact *DirectContact
-	)
-	for _, value := range d.contacts {
-		if value.conn != nil && value.conn == conn {
-			contact = value
-			break
-		}
-	}
-	if contact != nil {
-		close(contact.hang)
-		contact.conn = nil
-		contact.hang = nil
-		return
-	}
-}
-
 type DirectListener struct {
+	ln      net.Listener
 	network string
 	addr    string
-	ln      net.Listener
 }
 
 // NewDirectListener
@@ -115,4 +42,70 @@ func (l *DirectListener) Listen() (ln net.Listener, err error) {
 		l.ln = ln
 	}
 	return
+}
+
+type DirectContact struct {
+	addr string
+	conn net.Conn
+	hang chan struct{}
+}
+
+type DirectDialer struct {
+	network  string
+	timeout  time.Duration
+	contacts map[string]*DirectContact
+}
+
+// NewDirectDialer
+func NewDirectDialer(network string, addrs ...string) (d *DirectDialer) {
+	return NewDirectDialerWithTimeout(3*time.Second, network, addrs...)
+}
+
+// NewDirectDialerWithTimeout
+func NewDirectDialerWithTimeout(timeout time.Duration, network string, addrs ...string) (d *DirectDialer) {
+	d = &DirectDialer{
+		timeout:  timeout,
+		network:  network,
+		contacts: make(map[string]*DirectContact),
+	}
+	for _, addr := range addrs {
+		d.contacts[addr] = &DirectContact{addr: addr}
+	}
+	return
+}
+
+// Dial implements transport.Dialer.
+func (d *DirectDialer) Dial() (conn net.Conn, weight int, hang <-chan struct{}, err error) {
+	for _, contact := range d.contacts {
+		if contact.conn == nil {
+			return d.dial(contact)
+		}
+	}
+	return nil, 0, nil, errors.New("no idle contact found")
+}
+
+// dial
+func (d *DirectDialer) dial(contact *DirectContact) (conn net.Conn, weight int, hang <-chan struct{}, err error) {
+	contact.conn, err = net.DialTimeout(d.network, contact.addr, d.timeout)
+	if err == nil {
+		contact.hang = make(chan struct{})
+		return contact.conn, transport.WeightNormal, contact.hang, nil
+	}
+	return
+}
+
+// Hang implements transport.Dialer.
+func (d *DirectDialer) Hang(conn net.Conn) {
+	for _, contact := range d.contacts {
+		if contact.conn != nil && contact.conn == conn {
+			d.hang(contact)
+			break
+		}
+	}
+}
+
+// hang
+func (d *DirectDialer) hang(contact *DirectContact) {
+	contact.conn = nil
+	contact.hang = nil
 }

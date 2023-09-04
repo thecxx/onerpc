@@ -1,4 +1,4 @@
-package proto
+package protocol
 
 import (
 	"bytes"
@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-func TestPacket_Write(t *testing.T) {
-	sp := NewPacket()
+func TestMessage_Write(t *testing.T) {
+	sp := NewMessage()
 	sp.SetSeq(rand.Uint64())
 	// p.SetOption(OptOneWay, true)
 
@@ -20,7 +20,7 @@ func TestPacket_Write(t *testing.T) {
 
 	t.Logf("%+v", buff.Bytes())
 
-	rp := NewPacket()
+	rp := NewMessage()
 
 	_, err := rp.ReadFrom(&buff)
 	if err != nil {

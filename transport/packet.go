@@ -15,35 +15,70 @@
 package transport
 
 import (
-	"io"
+	"context"
 )
 
-// Packet
-type Packet interface {
-	// Seq gets the sequence number
-	Seq() uint64
+type Handler interface {
+	ServePacket(w MessageWriter, p *Packet)
+}
 
-	// SetSeq sets the sequence number
-	SetSeq(seq uint64)
+type HandleFunc func(w MessageWriter, p *Packet)
 
-	// IsOneway
-	IsOneway() bool
+func (f HandleFunc) ServePacket(w MessageWriter, p *Packet) {
+	f(w, p)
+}
 
-	// SetOneway
-	SetOneway()
+type Packet struct {
+	// Context
+	ctx context.Context
 
-	// Bytes
-	Bytes() []byte
+	// Line
+	line *Line
 
-	// String
-	String() string
+	// Message
+	message Message
 
-	// Store
-	Store(data []byte)
+	// Protocol
+	proto Protocol
+}
 
-	// Read reads the packet from r
-	ReadFrom(r io.Reader) (n int64, err error)
+// Protocol returns the protocol version.
+func (p *Packet) Protocol() string {
+	return p.proto.Version()
+}
 
-	// Write writes the packet into w
-	WriteTo(w io.Writer) (n int64, err error)
+// Bytes
+func (p *Packet) Bytes() []byte {
+	return p.message.Bytes()
+}
+
+// IsOneway
+func (p *Packet) IsOneway() bool {
+	return p.message.IsOneway()
+}
+
+// NewMessage
+func (p *Packet) NewMessage() (m Message) {
+	return p.proto.NewMessage()
+}
+
+// NewReply
+func (p *Packet) NewReply() (r Message) {
+	r = p.proto.NewMessage()
+	// Same sequence number
+	r.SetSeq(p.message.Seq())
+	return
+}
+
+// Done
+func (p *Packet) Done() <-chan struct{} {
+	return p.ctx.Done()
+}
+
+// reset
+func (p *Packet) reset() {
+	p.ctx = nil
+	p.line = nil
+	p.message = nil
+	p.proto = nil
 }

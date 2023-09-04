@@ -32,8 +32,14 @@ type Connection struct {
 	// Weight
 	Weight int
 
-	// New packet
-	Packet PacketFunc
+	// Hang
+	Hang <-chan struct{}
+
+	// Protocol
+	Protocol Protocol
+
+	// Packet pool
+	PacketPool *sync.Pool
 
 	// Timeout
 	ReadTimeout  time.Duration
@@ -47,14 +53,11 @@ type Connection struct {
 	ReaderBufferSize int
 	WriterBufferSize int
 
-	// Hang
-	Hang chan struct{}
-
 	// Disconnect queue
 	DQueue chan *Connection
 
 	// Recv queue
-	RQueue chan *Receiver
+	RQueue chan *Packet
 
 	err    error
 	ctx    context.Context
@@ -69,8 +72,8 @@ func (c *Connection) Start(ctx context.Context) {
 	} else {
 		c.ctx, c.cancel = context.WithTimeout(ctx, c.MaxLifeTime)
 	}
-	// Handle foreign packet
-	go c.handleForeignPacket()
+	// Handle remote packet
+	go c.handleRemotePacket()
 }
 
 // Stop
@@ -79,8 +82,8 @@ func (c *Connection) Stop() {
 }
 
 // Send
-func (c *Connection) Send(sp Packet) (n int64, err error) {
-	return c.send(sp)
+func (c *Connection) Send(m Message) (n int64, err error) {
+	return c.send(m)
 }
 
 // Error
@@ -88,24 +91,19 @@ func (c *Connection) Error() (err error) {
 	return c.err
 }
 
-// ack
-func (c *Connection) ack(sp Packet) (n int64, err error) {
-	return c.send(sp)
-}
-
 // send
-func (c *Connection) send(sp Packet) (n int64, err error) {
+func (c *Connection) send(m Message) (n int64, err error) {
 	c.locker.Lock()
 	defer c.locker.Unlock()
 	// Write to connection
 	if c.WriteTimeout > 0 {
 		c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeout))
 	}
-	return sp.WriteTo(c.Conn)
+	return m.WriteTo(c.Conn)
 }
 
-// handleForeignPacket
-func (c *Connection) handleForeignPacket() {
+// handleRemotePacket
+func (c *Connection) handleRemotePacket() {
 	// Buffer
 	r := bufio.NewReaderSize(c.Conn, c.ReaderBufferSize)
 
@@ -118,12 +116,19 @@ func (c *Connection) handleForeignPacket() {
 			c.Conn.SetReadDeadline(time.Now().Add(c.IdleTimeout))
 		}
 
-		rp := c.Packet()
+		m := c.Protocol.NewMessage()
 
 		// Read from connection
-		if _, c.err = rp.ReadFrom(r); c.err != nil {
+		if _, c.err = m.ReadFrom(r); c.err != nil {
 			break
 		}
+
+		p := c.PacketPool.Get().(*Packet)
+		p.reset()
+		p.ctx = c.ctx
+		p.conn = c
+		p.message = m
+		p.protocol = c.Protocol
 
 		select {
 		// Cancel
@@ -135,7 +140,7 @@ func (c *Connection) handleForeignPacket() {
 			c.err = errors.New("hang up")
 			break
 		// Submit to transport
-		case c.RQueue <- &Receiver{RP: rp, OnAck: c.ack}:
+		case c.RQueue <- p:
 			// In the pipe, five by five!
 		}
 	}

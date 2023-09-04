@@ -20,8 +20,8 @@ import (
 )
 
 type RoundRobinBalancer struct {
-	rss []*Connection
-	rsm map[*Connection]int
+	rss []*Line
+	rsm map[*Line]int
 	cu  uint32
 	mu  sync.RWMutex
 }
@@ -29,32 +29,32 @@ type RoundRobinBalancer struct {
 // NewRoundRobinBalancer
 func NewRoundRobinBalancer() (b *RoundRobinBalancer) {
 	return &RoundRobinBalancer{
-		rss: make([]*Connection, 0),
-		rsm: make(map[*Connection]int),
+		rss: make([]*Line, 0),
+		rsm: make(map[*Line]int),
 	}
 }
 
 // Next implements Balancer.
-func (b *RoundRobinBalancer) Next() (c *Connection) {
+func (b *RoundRobinBalancer) Next() (l *Line) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.rss[int(atomic.AddUint32(&b.cu, 1))%len(b.rss)]
 }
 
 // Add implements Balancer.
-func (b *RoundRobinBalancer) Add(c *Connection, _ int) {
+func (b *RoundRobinBalancer) Add(l *Line, _ int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	// Update
-	b.update(append([]*Connection{c}, b.rss...))
+	b.update(append([]*Line{l}, b.rss...))
 }
 
 // Remove implements Balancer.
-func (b *RoundRobinBalancer) Remove(c *Connection) {
+func (b *RoundRobinBalancer) Remove(l *Line) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	// Remove
-	if i, ok := b.rsm[c]; !ok {
+	if i, ok := b.rsm[l]; !ok {
 		return
 	} else if i < len(b.rss) {
 		if i+1 == len(b.rss) {
@@ -65,15 +65,15 @@ func (b *RoundRobinBalancer) Remove(c *Connection) {
 				b.rsm[b.rss[j]] = j
 			}
 		}
-		delete(b.rsm, c)
+		delete(b.rsm, l)
 	}
 }
 
 // update
-func (b *RoundRobinBalancer) update(cs []*Connection) {
+func (b *RoundRobinBalancer) update(cs []*Line) {
 	var (
-		rsm = make(map[*Connection]int)
-		rss = make([]*Connection, len(cs))
+		rsm = make(map[*Line]int)
+		rss = make([]*Line, len(cs))
 	)
 	for i, c := range cs {
 		rss[i], rsm[c] = c, i

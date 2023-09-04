@@ -14,11 +14,4 @@
 
 package onerpc
 
-type Endpoint struct {
-	Key   string
-	Value []byte
-}
-
-type Discovery interface {
-	Endpoints()
-}
+type Discovery interface{}

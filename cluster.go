@@ -15,13 +15,36 @@
 package onerpc
 
 import (
+	"net"
 	"time"
-
-	"github.com/govoltron/onerpc/transport"
 )
 
-// NewServiceDialer
-func (c *Cluster) NewServiceDialer(srvname string, timeout time.Duration) (d transport.Dialer) {
+type ClusterDialer struct {
+	srvname string
+	timeout time.Duration
+	cluster *Cluster
+}
+
+// Dial implements transport.Dialer.
+func (d *ClusterDialer) Dial() (conn net.Conn, weight int, hang <-chan struct{}, err error) {
+	return
+}
+
+// Hang implements transport.Dialer.
+func (d *ClusterDialer) Hang(conn net.Conn) {
+
+}
+
+type ClusterListener struct {
+	srvname string
+	network string
+	addr    string
+	weight  int
+	cluster *Cluster
+}
+
+// Listen implements transport.Listener.
+func (l *ClusterListener) Listen() (ln net.Listener, err error) {
 	return
 }
 
@@ -29,38 +52,21 @@ type Cluster struct {
 	discovery Discovery
 }
 
+// NewCluster
 func NewCluster() (c *Cluster) {
-	return &Cluster{}
+	return &Cluster{
+		discovery: nil,
+	}
 }
 
-// RegisterName 注册服务，并为服务名设置接收服务。
-func (c *Cluster) RegisterName(srvname string, receiver Service) {
-	c.recv(srvname, receiver)
+// NewServiceDialer
+func (c *Cluster) NewServiceDialer(srvname string, timeout time.Duration) (d *ClusterDialer) {
+	return &ClusterDialer{srvname: srvname, timeout: timeout}
 }
 
-// Send 向指定服务发送请求，并返回响应结果。
-func (c *Cluster) Send(srvname string, in []byte) (out []byte, err error) {
-
-	// // send to underlay
-	// pk, err := c.send(srvname, in)
-	// if err != nil {
-	// 	return
-	// }
-
-	// for {
-	// 	select {
-	// 	// OK
-	// 	case <-pk.Done:
-
-	// 	}
-	// }
-
-	return
-}
-
-// Async 向指定服务发送请求，并返回响应结果。
-func (c *Cluster) Async(srvname string, in []byte, handler func(out []byte, err error)) (err error) {
-	return
+// NewServiceListener
+func (c *Cluster) NewServiceListener(srvname, network, addr string, weight int) (l *ClusterListener) {
+	return &ClusterListener{srvname: srvname, network: network, addr: addr, weight: weight}
 }
 
 // func (c *Cluster) call(srvname string, in []byte) {
@@ -83,6 +89,3 @@ func (c *Cluster) Async(srvname string, in []byte, handler func(out []byte, err 
 
 // 	return
 // }
-
-// Recv 注册服务，并为服务名设置接收服务。
-func (c *Cluster) recv(srvname string, receiver Service) {}

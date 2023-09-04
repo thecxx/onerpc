@@ -12,32 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package transport
+package onerpc
 
-// Sender
-type Sender struct {
-	// Message
-	message Message
-
-	// Reply
-	reply Message
-
-	// handler
-	handler func(r Message, err error)
-
-	err error
-
-	// Done signal
-	done chan struct{}
+type Service struct {
 }
 
-// Ack
-func (s *Sender) Ack(r Message, err error) {
-	s.reply, s.err = r, err
-
-	if s.handler != nil {
-		s.handler(r, err)
-	} else {
-		close(s.done)
-	}
-}
+func (s *Service) OnCall() {}

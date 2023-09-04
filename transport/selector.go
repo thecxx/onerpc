@@ -13,31 +13,3 @@
 // limitations under the License.
 
 package transport
-
-// Sender
-type Sender struct {
-	// Message
-	message Message
-
-	// Reply
-	reply Message
-
-	// handler
-	handler func(r Message, err error)
-
-	err error
-
-	// Done signal
-	done chan struct{}
-}
-
-// Ack
-func (s *Sender) Ack(r Message, err error) {
-	s.reply, s.err = r, err
-
-	if s.handler != nil {
-		s.handler(r, err)
-	} else {
-		close(s.done)
-	}
-}

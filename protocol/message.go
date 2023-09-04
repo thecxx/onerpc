@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package proto
+package protocol
 
 import (
 	"encoding/binary"
 	"errors"
 	"io"
 	"math"
+
+	"github.com/govoltron/onerpc/transport"
 )
 
 const (
@@ -40,7 +42,6 @@ const (
 	_
 	OptOneway
 	OptLargeSize
-	OptAll Option = ^Option(0)
 )
 
 // Packet header
@@ -95,69 +96,64 @@ func (h *Header) SetOption(opt Option, open bool) {
 	}
 }
 
-// Packet
-type Packet struct {
+// Message
+type Message struct {
 	*Header
 	buff []byte
 }
 
-// NewPacket
-func NewPacket() (p *Packet) {
-	p = &Packet{
+// NewMessage
+func NewMessage() (m *Message) {
+	m = &Message{
 		Header: new(Header),
 	}
-	p.Header[0] = byte(MagicNumber & 0xFF00 >> 8)
-	p.Header[1] = byte(MagicNumber & 0x00FF)
-	p.Header[2] = Version10
+	m.Header[0] = byte(MagicNumber & 0xFF00 >> 8)
+	m.Header[1] = byte(MagicNumber & 0x00FF)
+	m.Header[2] = Version10
 	return
 }
 
 // Bytes
-func (p *Packet) Bytes() []byte {
-	return p.buff
-}
-
-// String
-func (p *Packet) String() string {
-	return string(p.buff)
+func (m *Message) Bytes() []byte {
+	return m.buff
 }
 
 // Store
-func (p *Packet) Store(data []byte) {
-	p.buff = data
+func (m *Message) Store(data []byte) {
+	m.buff = data
 }
 
 // ReadFrom
-func (p *Packet) ReadFrom(r io.Reader) (n int64, err error) {
+func (m *Message) ReadFrom(r io.Reader) (n int64, err error) {
 
 	// Magic number
-	_, err = io.ReadFull(r, p.Header[0:2])
+	_, err = io.ReadFull(r, m.Header[0:2])
 	if err != nil {
 		return
 	}
 
-	if p.MagicNumber() != MagicNumber {
+	if m.MagicNumber() != MagicNumber {
 		return 0, errors.New("invalid magic number")
 	}
 
 	// Version
-	_, err = io.ReadFull(r, p.Header[2:3])
+	_, err = io.ReadFull(r, m.Header[2:3])
 	if err != nil {
 		return
 	}
 
-	if p.Version() != Version10 {
+	if m.Version() != Version10 {
 		return 0, errors.New("invalid version")
 	}
 
 	// Sequence number
-	_, err = io.ReadFull(r, p.Header[3:11])
+	_, err = io.ReadFull(r, m.Header[3:11])
 	if err != nil {
 		return
 	}
 
 	// Options
-	_, err = io.ReadFull(r, p.Header[11:12])
+	_, err = io.ReadFull(r, m.Header[11:12])
 	if err != nil {
 		return
 	}
@@ -166,7 +162,7 @@ func (p *Packet) ReadFrom(r io.Reader) (n int64, err error) {
 		size int
 		buff []byte
 	)
-	if p.GetOption(OptLargeSize) {
+	if m.GetOption(OptLargeSize) {
 		buff = make([]byte, 4)
 	} else {
 		buff = make([]byte, 2)
@@ -183,9 +179,9 @@ func (p *Packet) ReadFrom(r io.Reader) (n int64, err error) {
 		size = int(binary.BigEndian.Uint16(buff))
 	}
 
-	p.buff = make([]byte, size)
+	m.buff = make([]byte, size)
 
-	_, err = io.ReadFull(r, p.buff)
+	_, err = io.ReadFull(r, m.buff)
 	if err != nil {
 		return
 	}
@@ -194,16 +190,16 @@ func (p *Packet) ReadFrom(r io.Reader) (n int64, err error) {
 }
 
 // WriteTo
-func (p *Packet) WriteTo(w io.Writer) (n int64, err error) {
+func (m *Message) WriteTo(w io.Writer) (n int64, err error) {
 	var (
-		size = len(p.buff)
+		size = len(m.buff)
 		buff []byte
 	)
 	if size <= math.MaxUint16 {
 		buff = make([]byte, 2)
 	} else {
 		buff = make([]byte, 4)
-		p.Header.SetOption(OptLargeSize, true)
+		m.Header.SetOption(OptLargeSize, true)
 	}
 
 	if len(buff) == 2 {
@@ -212,7 +208,7 @@ func (p *Packet) WriteTo(w io.Writer) (n int64, err error) {
 		binary.BigEndian.PutUint32(buff, uint32(size))
 	}
 
-	_, err = w.Write(p.Header[:])
+	_, err = w.Write(m.Header[:])
 	if err != nil {
 		return
 	}
@@ -220,10 +216,28 @@ func (p *Packet) WriteTo(w io.Writer) (n int64, err error) {
 	if err != nil {
 		return
 	}
-	n1, err := w.Write(p.buff)
+	n1, err := w.Write(m.buff)
 	if err != nil {
 		return
 	}
 
 	return int64(n1), nil
+}
+
+type Protocol struct {
+}
+
+// NewProtocol
+func NewProtocol() (p *Protocol) {
+	return new(Protocol)
+}
+
+// Version
+func (p *Protocol) Version() string {
+	return "onerpc message 1.0"
+}
+
+// NewMessage
+func (p *Protocol) NewMessage() (m transport.Message) {
+	return NewMessage()
 }

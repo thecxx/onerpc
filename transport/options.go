@@ -13,12 +13,3 @@
 // limitations under the License.
 
 package transport
-
-type Receiver struct {
-
-	// Recved packet
-	RP Packet
-
-	// OnAck
-	OnAck func(sp Packet) (n int64, err error)
-}

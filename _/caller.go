@@ -14,5 +14,15 @@
 
 package onerpc
 
-type Caller interface {
+import (
+	"context"
+)
+
+type Caller struct {
+	// client *Client
+}
+
+// Call
+func (c *Caller) Call(ctx context.Context) {
+	// c.client.Send(ctx, nil)
 }

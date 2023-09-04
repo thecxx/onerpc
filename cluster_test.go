@@ -16,13 +16,14 @@ package onerpc_test
 
 import (
 	"context"
-	"sync"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/govoltron/onerpc"
-	"github.com/govoltron/onerpc/libnet"
-	"github.com/govoltron/onerpc/proto"
+	"github.com/govoltron/onerpc/link"
+	"github.com/govoltron/onerpc/middleware"
+	"github.com/govoltron/onerpc/protocol"
 	"github.com/govoltron/onerpc/transport"
 )
 
@@ -32,7 +33,6 @@ func TestCluster_Send(t *testing.T) {
 	client := onerpc.NewClient(
 		// client.DirectDial("tcp", "127.0.0.1:80"),
 		cluster.NewServiceDialer("user-core-service", 1*time.Second),
-		func() transport.Packet { return proto.NewPacket() },
 	)
 	err := client.Connect()
 	if err != nil {
@@ -40,31 +40,39 @@ func TestCluster_Send(t *testing.T) {
 	}
 	defer client.Close()
 
-	client.Send(context.TODO(), proto.NewPacket())
+	// client.Send(context.TODO(), protocol.NewPacket())
 }
 
 func TestServer_Start(t *testing.T) {
-	server0 := onerpc.NewServer(
-		libnet.NewDirectListener("tcp", ":8080"),
-		func() transport.Packet { return proto.NewPacket() },
-	)
-	err := server0.Listen()
-	if err != nil {
-		t.Errorf("Start failed, error is %s", err.Error())
-		return
-	}
-	defer server0.Close()
+	// cluster := onerpc.NewCluster()
 
-	server1 := onerpc.NewServer(
-		libnet.NewDirectListener("tcp", ":8081"),
-		func() transport.Packet { return proto.NewPacket() },
+	server := onerpc.NewServer(
+		link.NewDirectListener("tcp", "127.0.0.1:8080"),
+		// cluster.NewServiceListener("user-core-service", "tcp", "127.0.0.1:8080", 100),
 	)
-	err = server1.Listen()
+	err := server.Listen()
 	if err != nil {
 		t.Errorf("Start failed, error is %s", err.Error())
 		return
 	}
-	defer server1.Close()
+	defer server.Close()
+
+	server.Use(middleware.WithACL)
+
+	server.HandleFunc(func(w transport.MessageWriter, p *transport.Packet) {
+		fmt.Printf("OnPacket OK: %+v\n", string(p.Bytes()))
+
+		go func() {
+			m := protocol.NewMessage()
+			m.Store([]byte("OK, Is't broadcasting!"))
+			server.Broadcast(context.TODO(), m)
+		}()
+
+		m := p.NewReply()
+		m.Store([]byte("OK, I got!"))
+
+		w.WriteMessage(m)
+	})
 
 	// server.Broadcast(context.TODO(), protocol.NewPacket())
 
@@ -73,8 +81,7 @@ func TestServer_Start(t *testing.T) {
 
 func TestClient_Send(t *testing.T) {
 	client := onerpc.NewClient(
-		libnet.NewDirectDialer("tcp", "127.0.0.1:8080", "127.0.0.1:8081"),
-		func() transport.Packet { return proto.NewPacket() },
+		link.NewDirectDialer("tcp", "127.0.0.1:8080"),
 		onerpc.WithBalancer(transport.NewWeightRoundRobinBalancer()),
 	)
 	err := client.Connect()
@@ -84,29 +91,30 @@ func TestClient_Send(t *testing.T) {
 	}
 	defer client.Close()
 
-	time.Sleep(2 * time.Second)
-
-	var wg sync.WaitGroup
+	client.HandleFunc(func(w transport.MessageWriter, p *transport.Packet) {
+		if p.IsOneway() {
+			fmt.Printf("OnPacket oneway\n")
+		}
+		fmt.Printf("OnPacket OK: %s\n", string(p.Bytes()))
+		return
+	})
 
 	for i := 0; i < 10; i++ {
 
-		sp := proto.NewPacket()
-		sp.Store([]byte("Hello world!"))
+		m := protocol.NewMessage()
+		m.Store([]byte("Hello world!"))
 
-		wg.Add(1)
+		ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
 
-		client.Async(context.TODO(), sp, func(rp transport.Packet, err error) {
-			defer wg.Done()
-			if err != nil {
-				t.Errorf("Async failed, error is %s", err.Error())
-				return
-			}
-			t.Logf("ack: %s", rp.String())
-		})
+		r, err := client.Send(ctx, m)
+		cancel()
+		if err != nil {
+			t.Errorf("Async failed, error is %s", err.Error())
+			continue
+		}
+		t.Logf("ack: %s", string(r.Bytes()))
 
 	}
-
-	wg.Wait()
 
 	time.Sleep(5 * time.Second)
 
@@ -116,7 +124,7 @@ func TestClient_Send(t *testing.T) {
 	// 	return
 	// }
 
-	// rp := r.(*proto.Packet)
+	// rp := r.(*protocol.Packet)
 
 	// t.Logf("sh: %+v rh: %+v", *sp.Header, *rp.Header)
 	// t.Logf("ack: %s", rp.String())

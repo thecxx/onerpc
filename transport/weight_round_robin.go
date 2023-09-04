@@ -19,8 +19,8 @@ import (
 )
 
 type Endpoint struct {
-	C      *Connection
-	Weight int
+	l      *Line
+	weight int
 }
 
 type node struct {
@@ -31,7 +31,7 @@ type node struct {
 
 type WeightRoundRobinBalancer struct {
 	rss []*node
-	rsm map[*Connection]int
+	rsm map[*Line]int
 	mu  sync.RWMutex
 }
 
@@ -39,12 +39,12 @@ type WeightRoundRobinBalancer struct {
 func NewWeightRoundRobinBalancer() (b *WeightRoundRobinBalancer) {
 	return &WeightRoundRobinBalancer{
 		rss: make([]*node, 0),
-		rsm: make(map[*Connection]int),
+		rsm: make(map[*Line]int),
 	}
 }
 
 // Next
-func (b *WeightRoundRobinBalancer) Next() (c *Connection) {
+func (b *WeightRoundRobinBalancer) Next() (l *Line) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	// Next
@@ -52,7 +52,7 @@ func (b *WeightRoundRobinBalancer) Next() (c *Connection) {
 }
 
 // Add implements Balancer.
-func (b *WeightRoundRobinBalancer) Add(c *Connection, weight int) {
+func (b *WeightRoundRobinBalancer) Add(l *Line, weight int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	// Add
@@ -60,17 +60,17 @@ func (b *WeightRoundRobinBalancer) Add(c *Connection, weight int) {
 	for _, node := range b.rss {
 		endpoints = append(endpoints, node.endpoint)
 	}
-	endpoints = append(endpoints, Endpoint{C: c, Weight: weight})
+	endpoints = append(endpoints, Endpoint{l: l, weight: weight})
 	// Update
 	b.update(endpoints)
 }
 
 // Remove implements Balancer.
-func (b *WeightRoundRobinBalancer) Remove(c *Connection) {
+func (b *WeightRoundRobinBalancer) Remove(l *Line) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	// Remove
-	if i, ok := b.rsm[c]; !ok {
+	if i, ok := b.rsm[l]; !ok {
 		return
 	} else if i < len(b.rss) {
 		if i+1 == len(b.rss) {
@@ -78,10 +78,10 @@ func (b *WeightRoundRobinBalancer) Remove(c *Connection) {
 		} else {
 			b.rss = append(b.rss[0:i], b.rss[i+1:]...)
 			for j := i; j < len(b.rss); i++ {
-				b.rsm[b.rss[j].endpoint.C] = j
+				b.rsm[b.rss[j].endpoint.l] = j
 			}
 		}
-		delete(b.rsm, c)
+		delete(b.rsm, l)
 	}
 }
 
@@ -90,28 +90,28 @@ func (b *WeightRoundRobinBalancer) update(endpoints []Endpoint) {
 	// Get endpoints and update
 	var (
 		rss = make([]*node, 0)
-		rsm = make(map[*Connection]int)
+		rsm = make(map[*Line]int)
 	)
 	for _, endpoint := range endpoints {
 		node := &node{
 			endpoint:  endpoint,
-			effective: endpoint.Weight,
+			effective: endpoint.weight,
 		}
-		if i, ok := b.rsm[endpoint.C]; ok {
+		if i, ok := b.rsm[endpoint.l]; ok {
 			node.current = b.rss[i].current
 			node.effective = b.rss[i].effective
 		}
 		rss = append(rss, node)
 	}
 	for i, node := range rss {
-		rsm[node.endpoint.C] = i
+		rsm[node.endpoint.l] = i
 	}
 	// Replace
 	b.rss, b.rsm = rss, rsm
 }
 
 // next
-func (b *WeightRoundRobinBalancer) next() (c *Connection) {
+func (b *WeightRoundRobinBalancer) next() (l *Line) {
 	var (
 		total int
 		best  *node
@@ -122,7 +122,7 @@ func (b *WeightRoundRobinBalancer) next() (c *Connection) {
 		node.current += node.effective
 		// -1 when the connection is abnormal,
 		// +1 when the communication is successful
-		if node.effective < node.endpoint.Weight {
+		if node.effective < node.endpoint.weight {
 			node.effective++
 		}
 		// Maximum temporary weight node
@@ -132,14 +132,14 @@ func (b *WeightRoundRobinBalancer) next() (c *Connection) {
 	}
 	if best != nil {
 		best.current -= total
-		c = best.endpoint.C
+		l = best.endpoint.l
 	}
 	return
 }
 
 // node
-func (b *WeightRoundRobinBalancer) node(c *Connection) (node *node, ok bool) {
-	if i, ok1 := b.rsm[c]; !ok1 {
+func (b *WeightRoundRobinBalancer) node(l *Line) (node *node, ok bool) {
+	if i, ok1 := b.rsm[l]; !ok1 {
 		return nil, false
 	} else if i < len(b.rss) {
 		node, ok = b.rss[i], true

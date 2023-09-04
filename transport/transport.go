@@ -38,22 +38,14 @@ type Listener interface {
 
 // Dialer
 type Dialer interface {
-	Dial() (conn net.Conn, weight int, hang chan struct{}, err error)
+	Dial() (conn net.Conn, weight int, hang <-chan struct{}, err error)
 	Hang(conn net.Conn)
 }
 
-// New packet
-type PacketFunc func() Packet
-
-// Event handler
-type EventHandler interface {
-	OnPacket(ctx context.Context, rp Packet) (sp Packet, err error)
-}
-
 type Balancer interface {
-	Add(c *Connection, weight int)
-	Next() (c *Connection)
-	Remove(c *Connection)
+	Add(l *Line, weight int)
+	Next() (l *Line)
+	Remove(l *Line)
 }
 
 type Transport struct {
@@ -64,15 +56,17 @@ type Transport struct {
 	ReaderBufferSize int
 	WriterBufferSize int
 	Dialer           Dialer
-	Packet           PacketFunc
-	Event            EventHandler
+	Proto            Protocol
 	Balancer         Balancer
+	Handler          Handler
 
-	workers map[*Connection]time.Time
+	// Packet pool
+	ppool   sync.Pool
+	workers map[*Line]time.Time
 
 	// Queues
-	rqueue chan *Receiver
-	dqueue chan *Connection
+	rqueue chan *Packet
+	dqueue chan *Line
 
 	// Pending
 	pendings sync.Map
@@ -86,10 +80,11 @@ type Transport struct {
 // Start
 func (t *Transport) Start(ctx context.Context) {
 	t.ctx, t.cancel = context.WithCancel(ctx)
-	t.workers = make(map[*Connection]time.Time)
-	t.rqueue = make(chan *Receiver, 1024)
-	// Handle foreign packet
-	go t.handleForeignPacket()
+	t.workers = make(map[*Line]time.Time)
+	t.dqueue = make(chan *Line, 1024)
+	t.ppool.New = func() interface{} { return new(Packet) }
+	// Handle remote packet
+	go t.handleRemotePacket()
 }
 
 // Stop
@@ -101,68 +96,89 @@ func (t *Transport) Stop() {
 }
 
 // Broadcast
-func (t *Transport) Broadcast(ctx context.Context, sp Packet) (err error) {
-	sp.SetOneway()
-	return t.broadcast(ctx, sp)
+func (t *Transport) Broadcast(ctx context.Context, m Message) (err error) {
+	m.SetOneway()
+	return t.broadcast(ctx, m)
 }
 
 // Send
-func (t *Transport) Send(ctx context.Context, sp Packet) (rp Packet, err error) {
-	return t.send(ctx, sp, nil)
+func (t *Transport) Send(ctx context.Context, m Message) (r Message, err error) {
+	return t.send(ctx, m, nil)
 }
 
-// Async
-func (t *Transport) Async(ctx context.Context, sp Packet, fn func(rp Packet, err error)) {
-	t.send(ctx, sp, fn)
-}
+// // Async
+// func (t *Transport) Async(ctx context.Context, sp Packet, fn func(rp Packet, err error)) {
+// 	t.send(ctx, sp, fn)
+// }
 
 // Join
-func (t *Transport) Join(conn net.Conn, weight int, hang chan struct{}) {
+func (t *Transport) Join(conn net.Conn, weight int, hang <-chan struct{}) {
 	t.join(conn, weight, hang)
 }
 
 // join
-func (t *Transport) join(conn net.Conn, weight int, hang chan struct{}) {
-	c := new(Connection)
+func (t *Transport) join(conn net.Conn, weight int, hang <-chan struct{}) {
 
-	c.Weight = weight
+	l := new(Line)
 
-	c.Hang = hang
-	// Connection and Packet
-	c.Conn = conn
-	c.Packet = t.Packet
+	// Protocol
+	l.proto = t.Proto
+
+	// Connection
+	l.conn = conn
+	l.hang = hang
+	l.handler = t
+
+	// Queues
+	l.dqueue = t.dqueue
 
 	// Options
-	c.IdleTimeout = t.IdleTimeout
-	c.ReadTimeout = t.ReadTimeout
-	c.WriteTimeout = t.WriteTimeout
-	c.MaxLifeTime = t.MaxLifeTime
-	c.ReaderBufferSize = t.ReaderBufferSize
-	c.WriterBufferSize = t.WriterBufferSize
+	l.rt = t.ReadTimeout
+	l.wt = t.WriteTimeout
+	l.it = t.IdleTimeout
+	l.lt = t.MaxLifeTime
 
-	// Queue
-	c.DQueue = t.dqueue
-	c.RQueue = t.rqueue
+	// Insert new worker
+	t.insertWorker(l, weight)
 
-	t.locker.Lock()
-	t.workers[c] = time.Now()
-	if t.Balancer != nil {
-		t.Balancer.Add(c, weight)
-	}
-	t.locker.Unlock()
-
-	c.Start(t.ctx)
+	l.Start(t.ctx)
 }
 
-// discard
-func (t *Transport) discard(c *Connection) {
-	t.locker.Lock()
-	defer t.locker.Unlock()
-	// Delete
-	delete(t.workers, c)
-	if t.Balancer != nil {
-		t.Balancer.Remove(c)
+// disconnect
+func (t *Transport) disconnect(l *Line) {
+	t.removeWorker(l)
+	t.hang(l)
+}
+
+// ServeMessage
+func (t *Transport) ServeMessage(l *Line, m Message) {
+
+	seq := m.Seq()
+
+	// Find sender
+	sender, ok := t.findSender(seq)
+	if ok {
+		sender.Ack(m, nil)
+		return
 	}
+
+	p := t.ppool.New().(*Packet)
+	p.ctx = t.ctx
+	p.proto = l.proto
+	p.line = l
+	p.message = m
+
+	defer func() {
+		t.ppool.Put(p)
+	}()
+
+	w := messageWriter{
+		m: m,
+		l: l,
+		t: t,
+	}
+
+	t.Handler.ServePacket(w, p)
 }
 
 // tryDial
@@ -179,11 +195,10 @@ func (t *Transport) tryDial() {
 }
 
 // hang
-func (t *Transport) hang(c *Connection) {
-	if t.Dialer == nil {
-		return
+func (t *Transport) hang(l *Line) {
+	if t.Dialer != nil {
+		t.Dialer.Hang(l.conn)
 	}
-	t.Dialer.Hang(c.Conn)
 }
 
 // seq
@@ -195,127 +210,80 @@ func (t *Transport) seq() (seq uint64) {
 }
 
 // broadcast
-func (t *Transport) broadcast(ctx context.Context, sp Packet) (err error) {
+func (t *Transport) broadcast(ctx context.Context, m Message) (err error) {
 	t.locker.RLock()
 	defer t.locker.RUnlock()
 	// Broadcast
 	for c, _ := range t.workers {
-		c.Send(sp)
+		c.Send(m)
 	}
 	return
 }
 
 // send
-func (t *Transport) send(ctx context.Context, sp Packet, fn func(rp Packet, err error)) (rp Packet, err error) {
+func (t *Transport) send(ctx context.Context, m Message, fn func(r Message, err error)) (r Message, err error) {
 
 	seq := t.seq()
 
 	// Sequence number
-	sp.SetSeq(seq)
+	m.SetSeq(seq)
 
 	sender := new(Sender)
-	sender.SP = sp
+	sender.message = m
 
 	// Done signal
 	if fn != nil {
-		sender.OnRecv = fn
+		sender.handler = fn
 	} else {
-		sender.Done = make(chan *Sender, 10)
+		sender.done = make(chan struct{}, 0)
 	}
 
+	// autoRemovePendings := false
+
 	// Twoway
-	if !sp.IsOneway() {
-		t.pendings.Store(seq, sender)
+	if !m.IsOneway() {
+		t.insertSender(seq, sender)
+		// if autoRemovePendings {
+		// 	t.pendings.Delete(seq)
+		// }
 	}
 
 	// Send packet
-	go t.gogogo(sender)
+	go t.gogo(sender)
 
 	// Async
-	if sender.OnRecv != nil {
+	if sender.handler != nil {
 		return
 	}
 
 	select {
 	// Cancel
 	case <-ctx.Done():
-		return
-	// OK
-	case <-sender.Done:
-		rp = sender.RP
+		// autoRemovePendings = true
+		err = ctx.Err()
+	// Done
+	case <-sender.done:
+		r = sender.reply
 	}
 
-	if sender.Err != nil {
-		rp, err = nil, sender.Err
+	if sender.err != nil {
+		r, err = nil, sender.err
 	}
 
 	return
 }
 
-// gogogo
-func (t *Transport) gogogo(sender *Sender) {
-	sp := sender.SP
-
-	if c := t.selectWorker(); c == nil {
+// gogo
+func (t *Transport) gogo(sender *Sender) {
+	if l := t.selectWorker(); l == nil {
 		sender.Ack(nil, errors.New("no worker found"))
 	} else {
-		if _, err := c.Send(sp); err != nil {
+		if _, err := l.Send(sender.message); err != nil {
 			sender.Ack(nil, err)
-		}
-		// Oneway
-		if sp.IsOneway() {
+		} else if sender.message.IsOneway() {
 			sender.Ack(nil, nil)
 		}
 	}
-}
-
-// onRecv
-func (t *Transport) onRecv(receiver *Receiver) {
-
-	seq := receiver.RP.Seq()
-
-	// Find sender
-	sender, ok := t.findSender(seq)
-	if !ok {
-		t.noSender(receiver)
-	} else {
-		sender.Ack(receiver.RP, nil)
-	}
-}
-
-// noSender
-func (t *Transport) noSender(receiver *Receiver) {
-	if t.Event == nil {
-		return
-	}
-
-	rp := receiver.RP
-
-	sp, err := t.Event.OnPacket(t.ctx, rp)
-	if err != nil {
-		return
-	}
-
-	// Oneway
-	if rp.IsOneway() || sp == nil {
-		return
-	}
-
-	// Sequence number
-	sp.SetSeq(rp.Seq())
-	// Ack
-	receiver.OnAck(sp)
-}
-
-// selectWorker
-func (t *Transport) selectWorker() (c *Connection) {
-	t.locker.RLock()
-	defer t.locker.RUnlock()
-	// Select a worker connection
-	if t.Balancer != nil {
-		c = t.Balancer.Next()
-	}
-	return
 }
 
 // findSender
@@ -327,8 +295,46 @@ func (t *Transport) findSender(seq uint64) (sender *Sender, ok bool) {
 	return
 }
 
-// handleForeignPacket
-func (t *Transport) handleForeignPacket() {
+// insertSender
+func (t *Transport) insertSender(seq uint64, sender *Sender) {
+	t.pendings.Store(seq, sender)
+}
+
+// selectWorker
+func (t *Transport) selectWorker() (l *Line) {
+	t.locker.RLock()
+	defer t.locker.RUnlock()
+	// Select a worker
+	if t.Balancer != nil {
+		l = t.Balancer.Next()
+	}
+	return
+}
+
+// insertWorker
+func (t *Transport) insertWorker(l *Line, weight int) {
+	t.locker.Lock()
+	defer t.locker.Unlock()
+	// Insert new worker
+	t.workers[l] = time.Now()
+	if t.Balancer != nil {
+		t.Balancer.Add(l, weight)
+	}
+}
+
+// removeWorker
+func (t *Transport) removeWorker(l *Line) {
+	t.locker.Lock()
+	defer t.locker.Unlock()
+	// Delete a worker
+	delete(t.workers, l)
+	if t.Balancer != nil {
+		t.Balancer.Remove(l)
+	}
+}
+
+// handleRemotePacket
+func (t *Transport) handleRemotePacket() {
 	tk := time.NewTicker(time.Second)
 	defer tk.Stop()
 
@@ -337,16 +343,36 @@ func (t *Transport) handleForeignPacket() {
 		// Cancel
 		case <-t.ctx.Done():
 			return
-		// Recv queue
-		case r := <-t.rqueue:
-			t.onRecv(r)
-		// Disconnect queue
-		case c := <-t.dqueue:
-			t.discard(c)
-			t.hang(c)
 		// Join new connection
 		case <-tk.C:
 			t.tryDial()
+		// Disconnect queue
+		case c := <-t.dqueue:
+			t.disconnect(c)
 		}
 	}
+}
+
+type messageWriter struct {
+	m    Message
+	l    *Line
+	t    *Transport
+	sent bool
+}
+
+// WriteMessage implements MessageWriter.
+func (w messageWriter) WriteMessage(m Message) (n int64, err error) {
+	if m.Seq() == 0 {
+		m.SetSeq(w.t.seq())
+	}
+	// Reply
+	if w.m.Seq() == m.Seq() {
+		if w.m.IsOneway() || w.sent {
+			return
+		}
+		defer func() {
+			w.sent = true
+		}()
+	}
+	return w.l.Send(m)
 }

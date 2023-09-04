@@ -16,25 +16,27 @@ package onerpc
 
 import (
 	"context"
-	"fmt"
 	"time"
 
+	"github.com/govoltron/onerpc/protocol"
 	"github.com/govoltron/onerpc/transport"
 )
 
 type Client struct {
-	transport transport.Transport
-	dialer    transport.Dialer
-	packet    transport.PacketFunc
-	ctx       context.Context
-	cancel    context.CancelFunc
+	// Transport
+	transport   transport.Transport
+	dialer      transport.Dialer
+	handler     transport.Handler
+	middlewares []func(next transport.Handler) transport.Handler
+	// Context
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewClient
-func NewClient(dialer transport.Dialer, packet transport.PacketFunc, opts ...Option) (c *Client) {
+func NewClient(dialer transport.Dialer, opts ...Option) (c *Client) {
 	c = &Client{
 		dialer: dialer,
-		packet: packet,
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -64,9 +66,16 @@ func NewClient(dialer transport.Dialer, packet transport.PacketFunc, opts ...Opt
 	if c.transport.WriterBufferSize < 0 {
 		c.transport.WriterBufferSize = 10 * 1024
 	}
+	// Option: Protocol
+	if c.transport.Proto == nil {
+		c.transport.Proto = protocol.NewProtocol()
+	}
+	// Option: Balancer
+	if c.transport.Balancer == nil {
+		c.transport.Balancer = transport.NewRoundRobinBalancer()
+	}
 
-	c.transport.Event = c
-	c.transport.Packet = c.packet
+	c.transport.Handler = c
 
 	return
 }
@@ -101,9 +110,21 @@ func (c *Client) SetWriterBufferSize(size int) {
 	c.transport.WriterBufferSize = size
 }
 
+// SetProtocol implements CanOption.
+func (c *Client) SetProtocol(p transport.Protocol) {
+	c.transport.Proto = p
+}
+
 // SetBalancer implements CanOption.
 func (c *Client) SetBalancer(b transport.Balancer) {
 	c.transport.Balancer = b
+}
+
+// ServePacket
+func (c *Client) ServePacket(w transport.MessageWriter, p *transport.Packet) {
+	if c.handler != nil {
+		c.handler.ServePacket(w, p)
+	}
 }
 
 // Connect
@@ -125,23 +146,27 @@ func (c *Client) Connect() (err error) {
 	return
 }
 
-// OnPacket
-func (c *Client) OnPacket(ctx context.Context, rp transport.Packet) (sp transport.Packet, err error) {
-	if rp.IsOneway() {
-		fmt.Printf("OnPacket oneway\n")
+// Handle
+func (c *Client) Handle(handler transport.Handler) {
+	for i := len(c.middlewares) - 1; i >= 0; i-- {
+		handler = c.middlewares[i](handler)
 	}
-	fmt.Printf("OnPacket OK: %s\n", rp.String())
-	return
+	c.handler = handler
+}
+
+// HandleFunc
+func (c *Client) HandleFunc(handler func(w transport.MessageWriter, p *transport.Packet)) {
+	c.handler = transport.HandleFunc(handler)
+}
+
+// Use
+func (c *Client) Use(middleware func(next transport.Handler) transport.Handler) {
+	c.middlewares = append(c.middlewares, middleware)
 }
 
 // Send
-func (c *Client) Send(ctx context.Context, sp transport.Packet) (rp transport.Packet, err error) {
-	return c.transport.Send(ctx, sp)
-}
-
-// Async
-func (c *Client) Async(ctx context.Context, sp transport.Packet, fn func(rp transport.Packet, err error)) {
-	c.transport.Async(ctx, sp, fn)
+func (c *Client) Send(ctx context.Context, m transport.Message) (r transport.Message, err error) {
+	return c.transport.Send(ctx, m)
 }
 
 // Close

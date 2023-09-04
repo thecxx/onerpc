@@ -16,27 +16,26 @@ package onerpc
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"time"
 
-	"github.com/govoltron/onerpc/proto"
+	"github.com/govoltron/onerpc/protocol"
 	"github.com/govoltron/onerpc/transport"
 )
 
 type Server struct {
-	transport transport.Transport
-	listener  transport.Listener
-	packet    transport.PacketFunc
-	ctx       context.Context
-	cancel    context.CancelFunc
+	transport   transport.Transport
+	listener    transport.Listener
+	handler     transport.Handler
+	middlewares []func(next transport.Handler) transport.Handler
+	ctx         context.Context
+	cancel      context.CancelFunc
 }
 
 // NewServer
-func NewServer(listener transport.Listener, packet transport.PacketFunc, opts ...Option) (s *Server) {
+func NewServer(listener transport.Listener, opts ...Option) (s *Server) {
 	s = &Server{
 		listener: listener,
-		packet:   packet,
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -66,9 +65,12 @@ func NewServer(listener transport.Listener, packet transport.PacketFunc, opts ..
 	if s.transport.WriterBufferSize < 0 {
 		s.transport.WriterBufferSize = 10 * 1024
 	}
+	// Option: Protocol
+	if s.transport.Proto == nil {
+		s.transport.Proto = protocol.NewProtocol()
+	}
 
-	s.transport.Event = s
-	s.transport.Packet = s.packet
+	s.transport.Handler = s
 
 	return
 }
@@ -103,9 +105,21 @@ func (s *Server) SetWriterBufferSize(size int) {
 	s.transport.WriterBufferSize = size
 }
 
+// SetProtocol implements CanOption.
+func (s *Server) SetProtocol(p transport.Protocol) {
+	s.transport.Proto = p
+}
+
 // SetBalancer implements CanOption.
 func (s *Server) SetBalancer(b transport.Balancer) {
 	panic("option 'Balancer' not supported")
+}
+
+// ServePacket
+func (s *Server) ServePacket(w transport.MessageWriter, p *transport.Packet) {
+	if s.handler != nil {
+		s.handler.ServePacket(w, p)
+	}
 }
 
 // Listen
@@ -119,35 +133,43 @@ func (s *Server) Listen() (err error) {
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	s.transport.Start(s.ctx)
 
-	// Handle foreign connect
-	go s.handleForeignConnect(ln)
+	// Handle remote connect
+	go s.handleRemoteConnect(ln)
 
 	return
+}
+
+// Handle
+func (s *Server) Handle(handler transport.Handler) {
+	for i := len(s.middlewares) - 1; i >= 0; i-- {
+		handler = s.middlewares[i](handler)
+	}
+	s.handler = handler
+}
+
+// HandleFunc
+func (s *Server) HandleFunc(handler func(w transport.MessageWriter, p *transport.Packet)) {
+	s.Handle(transport.HandleFunc(handler))
+}
+
+// Use
+func (s *Server) Use(middleware func(next transport.Handler) transport.Handler) {
+	s.middlewares = append(s.middlewares, middleware)
 }
 
 // Broadcast
-func (s *Server) Broadcast(ctx context.Context, sp transport.Packet) (err error) {
-	return s.transport.Broadcast(ctx, sp)
+func (s *Server) Broadcast(ctx context.Context, m transport.Message) (err error) {
+	return s.transport.Broadcast(ctx, m)
 }
 
-// OnPacket
-func (s *Server) OnPacket(ctx context.Context, rp transport.Packet) (sp transport.Packet, err error) {
-	fmt.Printf("OnPacket OK: %+v\n", rp)
-
-	sp = proto.NewPacket()
-	sp.Store([]byte("OK, I got!"))
-
-	go func() {
-		sp := proto.NewPacket()
-		sp.Store([]byte("OK, Is't broadcasting!"))
-		s.Broadcast(ctx, sp)
-	}()
-
-	return
+// Close
+func (s *Server) Close() {
+	s.transport.Stop()
+	s.cancel()
 }
 
-// handleForeignConnect
-func (s *Server) handleForeignConnect(ln net.Listener) {
+// handleRemoteConnect
+func (s *Server) handleRemoteConnect(ln net.Listener) {
 	for {
 		if conn, err := ln.Accept(); err != nil {
 			break
@@ -155,10 +177,4 @@ func (s *Server) handleForeignConnect(ln net.Listener) {
 			s.transport.Join(conn, transport.WeightNormal, nil)
 		}
 	}
-}
-
-// Close
-func (s *Server) Close() {
-	s.transport.Stop()
-	s.cancel()
 }
