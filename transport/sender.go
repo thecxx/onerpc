@@ -31,8 +31,8 @@ type Sender struct {
 	done chan struct{}
 }
 
-// Ack
-func (s *Sender) Ack(r Message, err error) {
+// Reply
+func (s *Sender) Reply(r Message, err error) {
 	s.reply, s.err = r, err
 
 	if s.handler != nil {

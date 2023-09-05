@@ -159,7 +159,7 @@ func (t *Transport) OnTraffic(l *Line, m Message) {
 	// Find sender
 	sender, ok := t.findSender(seq)
 	if ok {
-		sender.Ack(m, nil)
+		sender.Reply(m, nil)
 		return
 	}
 
@@ -257,12 +257,12 @@ func (t *Transport) send(ctx context.Context, message []byte, fn func(reply []by
 // gogo
 func (t *Transport) gogo(sender *Sender) {
 	if l := t.selectWorker(); l == nil {
-		sender.Ack(nil, errors.New("no worker found"))
+		sender.Reply(nil, errors.New("no worker found"))
 	} else {
 		if _, err := l.Write(sender.message); err != nil {
-			sender.Ack(nil, err)
+			sender.Reply(nil, err)
 		} else if sender.message.IsOneway() {
-			sender.Ack(nil, nil)
+			sender.Reply(nil, nil)
 		}
 	}
 }
