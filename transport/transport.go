@@ -63,9 +63,9 @@ type Transport struct {
 	Handler  Handler
 	Balancer Balancer
 	// Pool
+	spool sync.Pool
 	ppool sync.Pool
 	mpool sync.Pool
-	spool sync.Pool
 	// Workers
 	workers map[*Line]time.Time
 	// Queues
@@ -84,8 +84,8 @@ func (t *Transport) Start(ctx context.Context) {
 	t.ctx, t.cancel = context.WithCancel(ctx)
 	t.workers = make(map[*Line]time.Time)
 	t.dqueue = make(chan *Line, 1024)
-	t.ppool.New = func() interface{} { return new(Packet) }
 	t.spool.New = func() interface{} { return new(Sender) }
+	t.ppool.New = func() interface{} { return new(Packet) }
 	t.mpool.New = func() interface{} { return t.Proto.NewMessage() }
 	// Handle remote packet
 	go t.handleRemotePacket()
@@ -109,10 +109,10 @@ func (t *Transport) Send(ctx context.Context, message []byte) (reply []byte, err
 	return t.send(ctx, message, nil)
 }
 
-// // Async
-// func (t *Transport) Async(ctx context.Context, sp Packet, fn func(rp Packet, err error)) {
-// 	t.send(ctx, sp, fn)
-// }
+// Async
+func (t *Transport) Async(ctx context.Context, message []byte, fn func(reply []byte, err error)) {
+	t.send(ctx, message, fn)
+}
 
 // Join
 func (t *Transport) Join(conn net.Conn, weight int, hang <-chan struct{}) {
@@ -132,7 +132,7 @@ func (t *Transport) join(conn net.Conn, weight int, hang <-chan struct{}) {
 	// Queues
 	l.dqueue = t.dqueue
 
-	// Pools
+	// Pool
 	l.mpool = &t.mpool
 
 	// Options
@@ -141,19 +141,10 @@ func (t *Transport) join(conn net.Conn, weight int, hang <-chan struct{}) {
 	l.it = t.IdleTimeout
 	l.lt = t.MaxLifeTime
 
-	// Transport
-	l.transport = t
-
 	// Insert new worker
 	t.insertWorker(l, weight)
 
 	l.Start(t.ctx)
-}
-
-// disconnect
-func (t *Transport) disconnect(l *Line) {
-	t.removeWorker(l)
-	t.hang(l)
 }
 
 // ServeMessage
@@ -168,46 +159,25 @@ func (t *Transport) ServeMessage(l *Line, m Message) {
 		return
 	}
 
-	p := t.newp()
+	p := t.ppool.Get().(*Packet)
 	p.reset()
 	p.ctx = t.ctx
-	p.proto = t.Proto
 	p.line = l
-	p.transport = t
 	p.message = m
+	p.proto = t.Proto
+	p.replied = false
 
 	defer func() {
-		t.putp(p)
+		t.ppool.Put(p)
 	}()
 
 	w := messageWriter{
-		message:   m,
-		packet:    p,
-		line:      l,
-		transport: t,
+		packet: p,
+		line:   l,
+		mpool:  &t.mpool,
 	}
 
 	t.Handler.ServePacket(w, p)
-}
-
-// tryDial
-func (t *Transport) tryDial() {
-	if t.Dialer == nil {
-		return
-	}
-	conn, weight, hang, err := t.Dialer.Dial()
-	if err != nil {
-		// TODO
-	} else {
-		t.join(conn, weight, hang)
-	}
-}
-
-// hang
-func (t *Transport) hang(l *Line) {
-	if t.Dialer != nil {
-		t.Dialer.Hang(l.conn)
-	}
 }
 
 // seq
@@ -223,12 +193,13 @@ func (t *Transport) broadcast(ctx context.Context, message []byte) (err error) {
 	t.locker.RLock()
 	defer t.locker.RUnlock()
 	//
-	m := t.newm()
+	m := t.mpool.Get().(Message)
+	m.Reset()
 	m.SetOneway()
 	m.Store(message)
 	// Broadcast
-	for c := range t.workers {
-		c.Send(m)
+	for l := range t.workers {
+		l.Write(m)
 	}
 	return
 }
@@ -238,12 +209,14 @@ func (t *Transport) send(ctx context.Context, message []byte, fn func(reply []by
 
 	seq := t.seq()
 
-	m := t.newm()
+	m := t.mpool.Get().(Message)
+	m.Reset()
 
 	// Sequence number
 	m.SetSeq(seq)
 
-	sender := t.news()
+	sender := t.spool.Get().(*Sender)
+	sender.reset()
 	sender.message = m
 
 	// Done signal
@@ -271,14 +244,14 @@ func (t *Transport) send(ctx context.Context, message []byte, fn func(reply []by
 	select {
 	// Cancel
 	case <-ctx.Done():
-		err = ctx.Err()
+		return nil, ctx.Err()
 	// Done
 	case <-sender.done:
-		reply = sender.reply.Bytes()
-	}
-
-	if sender.err != nil {
-		reply, err = nil, sender.err
+		if sender.err != nil {
+			reply, err = nil, sender.err
+		} else if sender.reply != nil {
+			reply = sender.reply.Bytes()
+		}
 	}
 
 	return
@@ -289,42 +262,12 @@ func (t *Transport) gogo(sender *Sender) {
 	if l := t.selectWorker(); l == nil {
 		sender.Ack(nil, errors.New("no worker found"))
 	} else {
-		if _, err := l.Send(sender.message); err != nil {
+		if _, err := l.Write(sender.message); err != nil {
 			sender.Ack(nil, err)
 		} else if sender.message.IsOneway() {
 			sender.Ack(nil, nil)
 		}
 	}
-}
-
-// newp
-func (t *Transport) newp() (p *Packet) {
-	return t.ppool.Get().(*Packet)
-}
-
-// putp
-func (t *Transport) putp(p *Packet) {
-	t.ppool.Put(p)
-}
-
-// newm
-func (t *Transport) newm() (m Message) {
-	return t.mpool.Get().(Message)
-}
-
-// putm
-func (t *Transport) putm(m Message) {
-	t.mpool.Put(m)
-}
-
-// news
-func (t *Transport) news() (sender *Sender) {
-	return t.spool.Get().(*Sender)
-}
-
-// puts
-func (t *Transport) puts(sender *Sender) {
-	t.spool.Put(sender)
 }
 
 // findSender
@@ -374,6 +317,19 @@ func (t *Transport) removeWorker(l *Line) {
 	}
 }
 
+// tryDial
+func (t *Transport) tryDial() {
+	if t.Dialer == nil {
+		return
+	}
+	conn, weight, hang, err := t.Dialer.Dial()
+	if err != nil {
+		// TODO
+	} else {
+		t.join(conn, weight, hang)
+	}
+}
+
 // handleRemotePacket
 func (t *Transport) handleRemotePacket() {
 	tk := time.NewTicker(time.Second)
@@ -388,8 +344,12 @@ func (t *Transport) handleRemotePacket() {
 		case <-tk.C:
 			t.tryDial()
 		// Disconnect queue
-		case c := <-t.dqueue:
-			t.disconnect(c)
+		case l := <-t.dqueue:
+			t.removeWorker(l)
+			// Hang
+			if t.Dialer != nil {
+				t.Dialer.Hang(l.conn)
+			}
 		}
 	}
 }

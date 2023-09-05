@@ -42,8 +42,6 @@ type Line struct {
 	wt time.Duration
 	it time.Duration
 	lt time.Duration
-	// Transport
-	transport *Transport
 	// error
 	err    error
 	ctx    context.Context
@@ -58,16 +56,8 @@ func (l *Line) Start(ctx context.Context) {
 	} else {
 		l.ctx, l.cancel = context.WithTimeout(ctx, l.lt)
 	}
-	// Handle remote packet
-	go l.handleRemotePacket()
-}
-
-// Send
-func (l *Line) Send(m Message) (n int64, err error) {
-	l.locker.Lock()
-	defer l.locker.Unlock()
-	// Write to remote
-	return m.WriteTo(l.conn)
+	// Recv from remote
+	go l.recv()
 }
 
 // Stop
@@ -75,15 +65,17 @@ func (l *Line) Stop() {
 	l.cancel()
 }
 
-// newm
-func (l *Line) newm() (m Message) {
-	return l.mpool.Get().(Message)
+// Write
+func (l *Line) Write(m Message) (n int64, err error) {
+	l.locker.Lock()
+	defer l.locker.Unlock()
+	// Write to remote
+	return m.WriteTo(l.conn)
 }
 
-// handleRemotePacket
-func (l *Line) handleRemotePacket() {
-	// Buffer
-	// r := bufio.NewReaderSize(l.conn, l.readerBufferSize)
+// recv
+func (l *Line) recv() {
+
 	r := l.conn
 
 	for {
@@ -91,13 +83,14 @@ func (l *Line) handleRemotePacket() {
 			break
 		}
 
-		m := l.newm()
+		m := l.mpool.Get().(Message)
+		m.Reset()
 
 		if l.it > 0 {
 			l.conn.SetReadDeadline(time.Now().Add(l.it))
 		}
 
-		// Read from connection
+		// Recv from connection
 		if _, l.err = m.ReadFrom(r); l.err != nil {
 			break
 		}

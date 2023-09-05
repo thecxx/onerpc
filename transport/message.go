@@ -17,6 +17,7 @@ package transport
 import (
 	"errors"
 	"io"
+	"sync"
 )
 
 type Message interface {
@@ -39,6 +40,9 @@ type Message interface {
 	// SetOneway
 	SetOneway()
 
+	// Reset
+	Reset()
+
 	// Read reads the packet from r
 	ReadFrom(r io.Reader) (n int64, err error)
 
@@ -56,55 +60,36 @@ type Protocol interface {
 }
 
 type MessageWriter interface {
-	Write(b []byte) (n int64, err error)
-	WriteMessage(m Message) (n int64, err error)
+
+	// Reply
+	Reply(b []byte) (n int64, err error)
 }
 
 type messageWriter struct {
-	message   Message
-	packet    *Packet
-	line      *Line
-	transport *Transport
+	packet *Packet
+	line   *Line
+	mpool  *sync.Pool
 }
 
-// Write implements MessageWriter.
-func (w messageWriter) Write(b []byte) (n int64, err error) {
-	if w.message.IsOneway() {
+// Reply implements MessageWriter.
+func (w messageWriter) Reply(b []byte) (n int64, err error) {
+	if w.packet.IsOneway() {
 		return 0, errors.New("oneway message")
 	}
 	if w.packet.IsReplied() {
 		return 0, errors.New("already replied")
 	}
 
-	m := w.transport.newm()
+	m := w.mpool.Get().(Message)
+	m.Reset()
 	m.Store(b)
-	m.SetSeq(w.message.Seq())
+	m.SetSeq(w.packet.Seq())
 
 	defer func() {
-		w.packet.SetReplied()
-		w.transport.putm(m)
+		w.packet.setReplied()
+		w.mpool.Put(m)
 	}()
 
-	// Send message
-	return w.line.Send(m)
-}
-
-// WriteMessage implements MessageWriter.
-func (w messageWriter) WriteMessage(m Message) (n int64, err error) {
-	if m.Seq() == 0 {
-		m.SetSeq(w.transport.seq())
-	}
-	// Reply
-	if w.message.Seq() == m.Seq() {
-		if w.message.IsOneway() {
-			return 0, errors.New("oneway message")
-		}
-		if w.packet.IsReplied() {
-			return 0, errors.New("already replied")
-		}
-		defer func() {
-			w.packet.SetReplied()
-		}()
-	}
-	return w.line.Send(m)
+	// Write message
+	return w.line.Write(m)
 }

@@ -41,3 +41,12 @@ func (s *Sender) Ack(r Message, err error) {
 		close(s.done)
 	}
 }
+
+// reset
+func (s *Sender) reset() {
+	s.message = nil
+	s.reply = nil
+	s.handler = nil
+	s.err = nil
+	s.done = nil
+}

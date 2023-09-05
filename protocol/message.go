@@ -123,6 +123,12 @@ func (m *Message) Store(data []byte) {
 	m.buff = data
 }
 
+// Reset
+func (m *Message) Reset() {
+	m.Header[11] = 0
+	m.buff = m.buff[:0]
+}
+
 // ReadFrom
 func (m *Message) ReadFrom(r io.Reader) (n int64, err error) {
 

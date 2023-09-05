@@ -65,10 +65,7 @@ func TestServer_Start(t *testing.T) {
 			server.Broadcast(context.TODO(), []byte("OK, Is't broadcasting!"))
 		}()
 
-		m := p.NewReply()
-		m.Store([]byte("OK, I got!"))
-
-		w.WriteMessage(m)
+		w.Reply([]byte("OK, I got!"))
 	})
 
 	// server.Broadcast(context.TODO(), protocol.NewPacket())
