@@ -99,11 +99,6 @@ func (t *Transport) Stop() {
 	t.cancel()
 }
 
-// Broadcast
-func (t *Transport) Broadcast(ctx context.Context, message []byte) (err error) {
-	return t.broadcast(ctx, message)
-}
-
 // Send
 func (t *Transport) Send(ctx context.Context, message []byte) (reply []byte, err error) {
 	return t.send(ctx, message, nil)
@@ -114,13 +109,29 @@ func (t *Transport) Async(ctx context.Context, message []byte, fn func(reply []b
 	t.send(ctx, message, fn)
 }
 
-// Join
-func (t *Transport) Join(conn net.Conn, weight int, hang <-chan struct{}) {
-	t.join(conn, weight, hang)
+// Broadcast
+func (t *Transport) Broadcast(ctx context.Context, message []byte) (err error) {
+	t.locker.RLock()
+	defer t.locker.RUnlock()
+	//
+	m := t.mpool.Get().(Message)
+	m.Reset()
+	m.SetOneway()
+	m.Store(message)
+
+	defer func() {
+		t.mpool.Put(m)
+	}()
+
+	// Broadcast
+	for l := range t.workers {
+		l.Write(m)
+	}
+	return
 }
 
-// join
-func (t *Transport) join(conn net.Conn, weight int, hang <-chan struct{}) {
+// Join
+func (t *Transport) Join(conn net.Conn, weight int, hang <-chan struct{}) {
 
 	l := new(Line)
 
@@ -184,22 +195,6 @@ func (t *Transport) ServeMessage(l *Line, m Message) {
 func (t *Transport) seq() (seq uint64) {
 	if seq = atomic.AddUint64(&t.sequence, 1); seq == 0 {
 		seq = atomic.AddUint64(&t.sequence, 1)
-	}
-	return
-}
-
-// broadcast
-func (t *Transport) broadcast(ctx context.Context, message []byte) (err error) {
-	t.locker.RLock()
-	defer t.locker.RUnlock()
-	//
-	m := t.mpool.Get().(Message)
-	m.Reset()
-	m.SetOneway()
-	m.Store(message)
-	// Broadcast
-	for l := range t.workers {
-		l.Write(m)
 	}
 	return
 }
@@ -326,7 +321,7 @@ func (t *Transport) tryDial() {
 	if err != nil {
 		// TODO
 	} else {
-		t.join(conn, weight, hang)
+		t.Join(conn, weight, hang)
 	}
 }
 
