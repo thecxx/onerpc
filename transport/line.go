@@ -22,19 +22,18 @@ import (
 	"time"
 )
 
-type MessageHandler interface {
-	ServeMessage(l *Line, m Message)
+type LineEventHandler interface {
+	OnTraffic(l *Line, m Message)
+	OnDisconnect(l *Line)
 }
 
 type Line struct {
 	// Raw connection
 	conn net.Conn
-	// Handler
-	handler MessageHandler
 	// Hang connection
 	hang <-chan struct{}
-	// Queues
-	dqueue chan *Line
+	// Handler
+	handler LineEventHandler
 	// Pool
 	mpool *sync.Pool
 	// Options
@@ -96,7 +95,7 @@ func (l *Line) recv() {
 		}
 
 		// Handle message
-		l.handler.ServeMessage(l, m)
+		l.handler.OnTraffic(l, m)
 
 		select {
 		// Cancel
@@ -116,4 +115,5 @@ func (l *Line) recv() {
 	l.conn.Close()
 
 	// TODO 未处理完的数据包
+	l.handler.OnDisconnect(l)
 }

@@ -68,9 +68,6 @@ type Transport struct {
 	mpool sync.Pool
 	// Workers
 	workers map[*Line]time.Time
-	// Queues
-	rqueue chan *Packet
-	dqueue chan *Line
 	// Pending
 	pendings sync.Map
 	sequence uint64
@@ -83,7 +80,6 @@ type Transport struct {
 func (t *Transport) Start(ctx context.Context) {
 	t.ctx, t.cancel = context.WithCancel(ctx)
 	t.workers = make(map[*Line]time.Time)
-	t.dqueue = make(chan *Line, 1024)
 	t.spool.New = func() interface{} { return new(Sender) }
 	t.ppool.New = func() interface{} { return new(Packet) }
 	t.mpool.New = func() interface{} { return t.Proto.NewMessage() }
@@ -140,9 +136,6 @@ func (t *Transport) Join(conn net.Conn, weight int, hang <-chan struct{}) {
 	l.hang = hang
 	l.handler = t
 
-	// Queues
-	l.dqueue = t.dqueue
-
 	// Pool
 	l.mpool = &t.mpool
 
@@ -158,8 +151,8 @@ func (t *Transport) Join(conn net.Conn, weight int, hang <-chan struct{}) {
 	l.Start(t.ctx)
 }
 
-// ServeMessage
-func (t *Transport) ServeMessage(l *Line, m Message) {
+// OnTraffic
+func (t *Transport) OnTraffic(l *Line, m Message) {
 
 	seq := m.Seq()
 
@@ -189,6 +182,15 @@ func (t *Transport) ServeMessage(l *Line, m Message) {
 	}
 
 	t.Handler.ServePacket(w, p)
+}
+
+// Disconnect
+func (t *Transport) OnDisconnect(l *Line) {
+	t.removeWorker(l)
+	// Hang
+	if t.Dialer != nil {
+		t.Dialer.Hang(l.conn)
+	}
 }
 
 // seq
@@ -338,13 +340,6 @@ func (t *Transport) handleRemotePacket() {
 		// Join new connection
 		case <-tk.C:
 			t.tryDial()
-		// Disconnect queue
-		case l := <-t.dqueue:
-			t.removeWorker(l)
-			// Hang
-			if t.Dialer != nil {
-				t.Dialer.Hang(l.conn)
-			}
 		}
 	}
 }
