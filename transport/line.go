@@ -27,8 +27,6 @@ type MessageHandler interface {
 }
 
 type Line struct {
-	// Protocol
-	proto Protocol
 	// Raw connection
 	conn net.Conn
 	// Handler
@@ -37,11 +35,15 @@ type Line struct {
 	hang <-chan struct{}
 	// Queues
 	dqueue chan *Line
+	// Pool
+	mpool *sync.Pool
 	// Options
 	rt time.Duration
 	wt time.Duration
 	it time.Duration
 	lt time.Duration
+	// Transport
+	transport *Transport
 	// error
 	err    error
 	ctx    context.Context
@@ -73,6 +75,11 @@ func (l *Line) Stop() {
 	l.cancel()
 }
 
+// newm
+func (l *Line) newm() (m Message) {
+	return l.mpool.Get().(Message)
+}
+
 // handleRemotePacket
 func (l *Line) handleRemotePacket() {
 	// Buffer
@@ -84,7 +91,7 @@ func (l *Line) handleRemotePacket() {
 			break
 		}
 
-		m := l.proto.NewMessage()
+		m := l.newm()
 
 		if l.it > 0 {
 			l.conn.SetReadDeadline(time.Now().Add(l.it))

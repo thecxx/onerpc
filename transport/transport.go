@@ -49,32 +49,34 @@ type Balancer interface {
 }
 
 type Transport struct {
-	ReadTimeout      time.Duration
-	WriteTimeout     time.Duration
-	IdleTimeout      time.Duration
-	MaxLifeTime      time.Duration
+	// Options
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+	IdleTimeout  time.Duration
+	MaxLifeTime  time.Duration
+	// Buffer sizes
 	ReaderBufferSize int
 	WriterBufferSize int
-	Dialer           Dialer
-	Proto            Protocol
-	Balancer         Balancer
-	Handler          Handler
-
-	// Packet pool
-	ppool   sync.Pool
+	//
+	Dialer   Dialer
+	Proto    Protocol
+	Handler  Handler
+	Balancer Balancer
+	// Pool
+	ppool sync.Pool
+	mpool sync.Pool
+	spool sync.Pool
+	// Workers
 	workers map[*Line]time.Time
-
 	// Queues
 	rqueue chan *Packet
 	dqueue chan *Line
-
 	// Pending
 	pendings sync.Map
 	sequence uint64
-
-	ctx    context.Context
-	cancel context.CancelFunc
-	locker sync.RWMutex
+	ctx      context.Context
+	cancel   context.CancelFunc
+	locker   sync.RWMutex
 }
 
 // Start
@@ -83,27 +85,28 @@ func (t *Transport) Start(ctx context.Context) {
 	t.workers = make(map[*Line]time.Time)
 	t.dqueue = make(chan *Line, 1024)
 	t.ppool.New = func() interface{} { return new(Packet) }
+	t.spool.New = func() interface{} { return new(Sender) }
+	t.mpool.New = func() interface{} { return t.Proto.NewMessage() }
 	// Handle remote packet
 	go t.handleRemotePacket()
 }
 
 // Stop
 func (t *Transport) Stop() {
-	for c, _ := range t.workers {
+	for c := range t.workers {
 		c.Stop()
 	}
 	t.cancel()
 }
 
 // Broadcast
-func (t *Transport) Broadcast(ctx context.Context, m Message) (err error) {
-	m.SetOneway()
-	return t.broadcast(ctx, m)
+func (t *Transport) Broadcast(ctx context.Context, message []byte) (err error) {
+	return t.broadcast(ctx, message)
 }
 
 // Send
-func (t *Transport) Send(ctx context.Context, m Message) (r Message, err error) {
-	return t.send(ctx, m, nil)
+func (t *Transport) Send(ctx context.Context, message []byte) (reply []byte, err error) {
+	return t.send(ctx, message, nil)
 }
 
 // // Async
@@ -121,9 +124,6 @@ func (t *Transport) join(conn net.Conn, weight int, hang <-chan struct{}) {
 
 	l := new(Line)
 
-	// Protocol
-	l.proto = t.Proto
-
 	// Connection
 	l.conn = conn
 	l.hang = hang
@@ -132,11 +132,17 @@ func (t *Transport) join(conn net.Conn, weight int, hang <-chan struct{}) {
 	// Queues
 	l.dqueue = t.dqueue
 
+	// Pools
+	l.mpool = &t.mpool
+
 	// Options
 	l.rt = t.ReadTimeout
 	l.wt = t.WriteTimeout
 	l.it = t.IdleTimeout
 	l.lt = t.MaxLifeTime
+
+	// Transport
+	l.transport = t
 
 	// Insert new worker
 	t.insertWorker(l, weight)
@@ -162,20 +168,23 @@ func (t *Transport) ServeMessage(l *Line, m Message) {
 		return
 	}
 
-	p := t.ppool.New().(*Packet)
+	p := t.newp()
+	p.reset()
 	p.ctx = t.ctx
-	p.proto = l.proto
+	p.proto = t.Proto
 	p.line = l
+	p.transport = t
 	p.message = m
 
 	defer func() {
-		t.ppool.Put(p)
+		t.putp(p)
 	}()
 
 	w := messageWriter{
-		m: m,
-		l: l,
-		t: t,
+		message:   m,
+		packet:    p,
+		line:      l,
+		transport: t,
 	}
 
 	t.Handler.ServePacket(w, p)
@@ -210,25 +219,31 @@ func (t *Transport) seq() (seq uint64) {
 }
 
 // broadcast
-func (t *Transport) broadcast(ctx context.Context, m Message) (err error) {
+func (t *Transport) broadcast(ctx context.Context, message []byte) (err error) {
 	t.locker.RLock()
 	defer t.locker.RUnlock()
+	//
+	m := t.newm()
+	m.SetOneway()
+	m.Store(message)
 	// Broadcast
-	for c, _ := range t.workers {
+	for c := range t.workers {
 		c.Send(m)
 	}
 	return
 }
 
 // send
-func (t *Transport) send(ctx context.Context, m Message, fn func(r Message, err error)) (r Message, err error) {
+func (t *Transport) send(ctx context.Context, message []byte, fn func(reply []byte, err error)) (reply []byte, err error) {
 
 	seq := t.seq()
+
+	m := t.newm()
 
 	// Sequence number
 	m.SetSeq(seq)
 
-	sender := new(Sender)
+	sender := t.news()
 	sender.message = m
 
 	// Done signal
@@ -238,14 +253,11 @@ func (t *Transport) send(ctx context.Context, m Message, fn func(r Message, err 
 		sender.done = make(chan struct{}, 0)
 	}
 
-	// autoRemovePendings := false
+	// TODO 删除Pendings
 
 	// Twoway
 	if !m.IsOneway() {
 		t.insertSender(seq, sender)
-		// if autoRemovePendings {
-		// 	t.pendings.Delete(seq)
-		// }
 	}
 
 	// Send packet
@@ -259,15 +271,14 @@ func (t *Transport) send(ctx context.Context, m Message, fn func(r Message, err 
 	select {
 	// Cancel
 	case <-ctx.Done():
-		// autoRemovePendings = true
 		err = ctx.Err()
 	// Done
 	case <-sender.done:
-		r = sender.reply
+		reply = sender.reply.Bytes()
 	}
 
 	if sender.err != nil {
-		r, err = nil, sender.err
+		reply, err = nil, sender.err
 	}
 
 	return
@@ -284,6 +295,36 @@ func (t *Transport) gogo(sender *Sender) {
 			sender.Ack(nil, nil)
 		}
 	}
+}
+
+// newp
+func (t *Transport) newp() (p *Packet) {
+	return t.ppool.Get().(*Packet)
+}
+
+// putp
+func (t *Transport) putp(p *Packet) {
+	t.ppool.Put(p)
+}
+
+// newm
+func (t *Transport) newm() (m Message) {
+	return t.mpool.Get().(Message)
+}
+
+// putm
+func (t *Transport) putm(m Message) {
+	t.mpool.Put(m)
+}
+
+// news
+func (t *Transport) news() (sender *Sender) {
+	return t.spool.Get().(*Sender)
+}
+
+// puts
+func (t *Transport) puts(sender *Sender) {
+	t.spool.Put(sender)
 }
 
 // findSender
@@ -351,28 +392,4 @@ func (t *Transport) handleRemotePacket() {
 			t.disconnect(c)
 		}
 	}
-}
-
-type messageWriter struct {
-	m    Message
-	l    *Line
-	t    *Transport
-	sent bool
-}
-
-// WriteMessage implements MessageWriter.
-func (w messageWriter) WriteMessage(m Message) (n int64, err error) {
-	if m.Seq() == 0 {
-		m.SetSeq(w.t.seq())
-	}
-	// Reply
-	if w.m.Seq() == m.Seq() {
-		if w.m.IsOneway() || w.sent {
-			return
-		}
-		defer func() {
-			w.sent = true
-		}()
-	}
-	return w.l.Send(m)
 }

@@ -23,7 +23,6 @@ import (
 	"github.com/govoltron/onerpc"
 	"github.com/govoltron/onerpc/link"
 	"github.com/govoltron/onerpc/middleware"
-	"github.com/govoltron/onerpc/protocol"
 	"github.com/govoltron/onerpc/transport"
 )
 
@@ -63,9 +62,7 @@ func TestServer_Start(t *testing.T) {
 		fmt.Printf("OnPacket OK: %+v\n", string(p.Bytes()))
 
 		go func() {
-			m := protocol.NewMessage()
-			m.Store([]byte("OK, Is't broadcasting!"))
-			server.Broadcast(context.TODO(), m)
+			server.Broadcast(context.TODO(), []byte("OK, Is't broadcasting!"))
 		}()
 
 		m := p.NewReply()
@@ -101,18 +98,15 @@ func TestClient_Send(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 
-		m := protocol.NewMessage()
-		m.Store([]byte("Hello world!"))
-
 		ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
 
-		r, err := client.Send(ctx, m)
+		r, err := client.Send(ctx, []byte("Hello world!"))
 		cancel()
 		if err != nil {
 			t.Errorf("Async failed, error is %s", err.Error())
 			continue
 		}
-		t.Logf("ack: %s", string(r.Bytes()))
+		t.Logf("ack: %s", string(r))
 
 	}
 

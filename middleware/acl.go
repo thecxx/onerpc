@@ -28,7 +28,10 @@ func WithACL(next transport.Handler) transport.Handler {
 
 			m := p.NewReply()
 			m.Store([]byte("WithACL 拒绝"))
-			w.WriteMessage(m)
+			_, err := w.WriteMessage(m)
+			if err != nil {
+				fmt.Printf("WithACL: %s\n", err.Error())
+			}
 			return
 		}
 

@@ -165,8 +165,8 @@ func (c *Client) Use(middleware func(next transport.Handler) transport.Handler) 
 }
 
 // Send
-func (c *Client) Send(ctx context.Context, m transport.Message) (r transport.Message, err error) {
-	return c.transport.Send(ctx, m)
+func (c *Client) Send(ctx context.Context, message []byte) (reply []byte, err error) {
+	return c.transport.Send(ctx, message)
 }
 
 // Close

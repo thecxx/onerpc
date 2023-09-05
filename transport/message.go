@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"errors"
 	"io"
 )
 
@@ -55,6 +56,55 @@ type Protocol interface {
 }
 
 type MessageWriter interface {
-	// Write(b []byte) (n int64, err error)
+	Write(b []byte) (n int64, err error)
 	WriteMessage(m Message) (n int64, err error)
+}
+
+type messageWriter struct {
+	message   Message
+	packet    *Packet
+	line      *Line
+	transport *Transport
+}
+
+// Write implements MessageWriter.
+func (w messageWriter) Write(b []byte) (n int64, err error) {
+	if w.message.IsOneway() {
+		return 0, errors.New("oneway message")
+	}
+	if w.packet.IsReplied() {
+		return 0, errors.New("already replied")
+	}
+
+	m := w.transport.newm()
+	m.Store(b)
+	m.SetSeq(w.message.Seq())
+
+	defer func() {
+		w.packet.SetReplied()
+		w.transport.putm(m)
+	}()
+
+	// Send message
+	return w.line.Send(m)
+}
+
+// WriteMessage implements MessageWriter.
+func (w messageWriter) WriteMessage(m Message) (n int64, err error) {
+	if m.Seq() == 0 {
+		m.SetSeq(w.transport.seq())
+	}
+	// Reply
+	if w.message.Seq() == m.Seq() {
+		if w.message.IsOneway() {
+			return 0, errors.New("oneway message")
+		}
+		if w.packet.IsReplied() {
+			return 0, errors.New("already replied")
+		}
+		defer func() {
+			w.packet.SetReplied()
+		}()
+	}
+	return w.line.Send(m)
 }

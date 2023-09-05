@@ -23,7 +23,7 @@ type Sender struct {
 	reply Message
 
 	// handler
-	handler func(r Message, err error)
+	handler func(reply []byte, err error)
 
 	err error
 
@@ -36,7 +36,7 @@ func (s *Sender) Ack(r Message, err error) {
 	s.reply, s.err = r, err
 
 	if s.handler != nil {
-		s.handler(r, err)
+		s.handler(s.reply.Bytes(), err)
 	} else {
 		close(s.done)
 	}

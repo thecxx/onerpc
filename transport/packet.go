@@ -35,16 +35,17 @@ type Packet struct {
 	// Line
 	line *Line
 
+	// Transport
+	transport *Transport
+
 	// Message
 	message Message
 
 	// Protocol
 	proto Protocol
-}
 
-// Protocol returns the protocol version.
-func (p *Packet) Protocol() string {
-	return p.proto.Version()
+	// Already replied
+	replied bool
 }
 
 // Bytes
@@ -57,14 +58,29 @@ func (p *Packet) IsOneway() bool {
 	return p.message.IsOneway()
 }
 
+// SetReplied
+func (p *Packet) SetReplied() {
+	p.replied = true
+}
+
+// IsReplied
+func (p *Packet) IsReplied() bool {
+	return p.replied
+}
+
+// Protocol returns the protocol version.
+func (p *Packet) Protocol() string {
+	return p.proto.Version()
+}
+
 // NewMessage
 func (p *Packet) NewMessage() (m Message) {
-	return p.proto.NewMessage()
+	return p.transport.newm()
 }
 
 // NewReply
 func (p *Packet) NewReply() (r Message) {
-	r = p.proto.NewMessage()
+	r = p.transport.newm()
 	// Same sequence number
 	r.SetSeq(p.message.Seq())
 	return
@@ -81,4 +97,5 @@ func (p *Packet) reset() {
 	p.line = nil
 	p.message = nil
 	p.proto = nil
+	p.replied = false
 }

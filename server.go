@@ -158,8 +158,8 @@ func (s *Server) Use(middleware func(next transport.Handler) transport.Handler) 
 }
 
 // Broadcast
-func (s *Server) Broadcast(ctx context.Context, m transport.Message) (err error) {
-	return s.transport.Broadcast(ctx, m)
+func (s *Server) Broadcast(ctx context.Context, message []byte) (err error) {
+	return s.transport.Broadcast(ctx, message)
 }
 
 // Close
