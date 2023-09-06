@@ -44,6 +44,8 @@ func (t *Transport) write(ctx context.Context, in []byte, opts ...MessageOption)
 	m.SetSeq(seq)
 
 	a := t.ap.Get().(*Await)
+	a.out = nil
+	a.err = nil
 
 	// Done signal
 	a.done = make(chan struct{}, 0)

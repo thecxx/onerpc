@@ -55,8 +55,8 @@ func (l *Line) Start(ctx context.Context) {
 	} else {
 		l.ctx, l.cancel = context.WithTimeout(ctx, l.lt)
 	}
-	// Recv from remote
-	go l.recv()
+	// Background goroutine
+	go l.background()
 }
 
 // Stop
@@ -72,8 +72,8 @@ func (l *Line) Write(m Message) (n int64, err error) {
 	return m.WriteTo(l.conn)
 }
 
-// recv
-func (l *Line) recv() {
+// background
+func (l *Line) background() {
 
 	r := l.conn
 

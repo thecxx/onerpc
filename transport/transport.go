@@ -94,11 +94,8 @@ func (t *Transport) Start(ctx context.Context) {
 	t.ap.New = func() interface{} { return new(Await) }
 	t.pp.New = func() interface{} { return new(Packet) }
 	t.mp.New = func() interface{} { return t.Proto.NewMessage() }
-	// t.spool.New = func() interface{} { return new(Sender) }
-	// t.ppool.New = func() interface{} { return new(Packet) }
-	// t.mpool.New = func() interface{} { return t.Proto.NewMessage() }
-	// Handle remote packet
-	go t.handleRemotePacket()
+	// Background goroutine
+	go t.background()
 }
 
 // Stop
@@ -172,8 +169,8 @@ func (t *Transport) tryDial() {
 	}
 }
 
-// handleRemotePacket
-func (t *Transport) handleRemotePacket() {
+// background
+func (t *Transport) background() {
 	tk := time.NewTicker(time.Second)
 	defer tk.Stop()
 
