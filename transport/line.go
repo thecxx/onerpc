@@ -55,6 +55,7 @@ func (l *Line) Start(ctx context.Context) {
 	} else {
 		l.ctx, l.cancel = context.WithTimeout(ctx, l.lt)
 	}
+
 	// Background goroutine
 	go l.background()
 }

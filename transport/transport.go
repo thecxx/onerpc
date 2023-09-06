@@ -91,9 +91,13 @@ type Transport struct {
 func (t *Transport) Start(ctx context.Context) {
 	t.ctx, t.cancel = context.WithCancel(ctx)
 	t.workers = make(map[*Line]time.Time)
+	// Await pool
 	t.ap.New = func() interface{} { return new(Await) }
+	// Packet pool
 	t.pp.New = func() interface{} { return new(Packet) }
+	// Message pool
 	t.mp.New = func() interface{} { return t.Proto.NewMessage() }
+
 	// Background goroutine
 	go t.background()
 }
@@ -119,6 +123,7 @@ func (t *Transport) Broadcast(ctx context.Context, message []byte) (err error) {
 	m := t.mp.Get().(Message)
 	m.SetOneway()
 	m.Store(message)
+	m.SetSeq(t.seq())
 
 	defer func() {
 		t.mp.Put(m)
