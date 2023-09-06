@@ -12,27 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package middleware
+package transport
 
-import (
-	"fmt"
+type MessageOption func(m Message)
 
-	"github.com/govoltron/onerpc/transport"
-)
-
-func WithACL(next transport.Handler) transport.Handler {
-	return transport.HandleFunc(func(w transport.MessageWriter, p *transport.Packet) {
-		if true {
-
-			fmt.Printf("Protocol: %s => %s\n", p.Protocol(), string(p.Bytes()))
-
-			_, err := w.Reply([]byte("WithACL 拒绝"))
-			if err != nil {
-				fmt.Printf("WithACL: %s\n", err.Error())
-			}
-			return
-		}
-
-		next.ServePacket(w, p)
-	})
+// WithOneway
+func WithOneway() MessageOption {
+	return func(m Message) { m.SetOneway() }
 }

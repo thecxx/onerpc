@@ -35,7 +35,7 @@ type Line struct {
 	// Handler
 	handler LineEventHandler
 	// Pool
-	mpool *sync.Pool
+	mp *sync.Pool
 	// Options
 	rt time.Duration
 	wt time.Duration
@@ -82,8 +82,7 @@ func (l *Line) recv() {
 			break
 		}
 
-		m := l.mpool.Get().(Message)
-		m.Reset()
+		m := l.mp.Get().(Message)
 
 		if l.it > 0 {
 			l.conn.SetReadDeadline(time.Now().Add(l.it))

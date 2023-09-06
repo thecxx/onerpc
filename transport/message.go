@@ -40,9 +40,6 @@ type Message interface {
 	// SetOneway
 	SetOneway()
 
-	// Reset
-	Reset()
-
 	// Read reads the packet from r
 	ReadFrom(r io.Reader) (n int64, err error)
 
@@ -68,7 +65,7 @@ type MessageWriter interface {
 type messageWriter struct {
 	packet *Packet
 	line   *Line
-	mpool  *sync.Pool
+	mp     *sync.Pool
 }
 
 // Reply implements MessageWriter.
@@ -80,14 +77,13 @@ func (w messageWriter) Reply(b []byte) (n int64, err error) {
 		return 0, errors.New("already replied")
 	}
 
-	m := w.mpool.Get().(Message)
-	m.Reset()
+	m := w.mp.Get().(Message)
 	m.Store(b)
 	m.SetSeq(w.packet.Seq())
 
 	defer func() {
 		w.packet.setReplied()
-		w.mpool.Put(m)
+		w.mp.Put(m)
 	}()
 
 	// Write message

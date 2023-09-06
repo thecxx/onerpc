@@ -14,39 +14,39 @@
 
 package transport
 
-// Sender
-type Sender struct {
-	// Message
-	message Message
+// // Sender
+// type Sender struct {
+// 	// Message
+// 	message Message
 
-	// Reply
-	reply Message
+// 	// Reply
+// 	reply Message
 
-	// handler
-	handler func(reply []byte, err error)
+// 	// handler
+// 	handler func(reply []byte, err error)
 
-	err error
+// 	err error
 
-	// Done signal
-	done chan struct{}
-}
+// 	// Done signal
+// 	done chan struct{}
+// }
 
-// Reply
-func (s *Sender) Reply(r Message, err error) {
-	s.reply, s.err = r, err
+// // Reply
+// func (s *Sender) Reply(r Message, err error) {
+// 	s.reply, s.err = r, err
 
-	if s.handler != nil {
-		s.handler(s.reply.Bytes(), err)
-	} else {
-		close(s.done)
-	}
-}
+// 	if s.handler != nil {
+// 		s.handler(s.reply.Bytes(), err)
+// 	} else {
+// 		close(s.done)
+// 	}
+// }
 
-// reset
-func (s *Sender) reset() {
-	s.message = nil
-	s.reply = nil
-	s.handler = nil
-	s.err = nil
-	s.done = nil
-}
+// // reset
+// func (s *Sender) reset() {
+// 	s.message = nil
+// 	s.reply = nil
+// 	s.handler = nil
+// 	s.err = nil
+// 	s.done = nil
+// }
