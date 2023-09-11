@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/govoltron/onerpc"
-	"github.com/govoltron/onerpc/link"
-	"github.com/govoltron/onerpc/middleware"
-	"github.com/govoltron/onerpc/transport"
+	"github.com/thecxx/onerpc"
+	"github.com/thecxx/onerpc/link"
+	"github.com/thecxx/onerpc/middleware"
+	"github.com/thecxx/onerpc/transport"
 )
 
 func TestCluster_Send(t *testing.T) {

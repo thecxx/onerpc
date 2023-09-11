@@ -18,16 +18,10 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
-	"time"
 )
 
-// seq
-func (t *Transport) seq() (seq uint64) {
-	return atomic.AddUint64(&t.seqincr, 1)
-}
-
-// write
-func (t *Transport) write(ctx context.Context, in []byte, opts ...MessageOption) (out []byte, err error) {
+// Send
+func (t *Transport) Send(ctx context.Context, message []byte, opts ...MessageOption) (reply []byte, err error) {
 
 	seq := t.seq()
 
@@ -38,13 +32,11 @@ func (t *Transport) write(ctx context.Context, in []byte, opts ...MessageOption)
 		setOpt(m)
 	}
 
-	m.Store(in)
-
-	// Sequence number
+	m.Store(message)
 	m.SetSeq(seq)
 
-	a := t.ap.Get().(*Await)
-	a.out = nil
+	a := t.ap.Get().(*await)
+	a.ret = nil
 	a.err = nil
 
 	// Done signal
@@ -54,11 +46,11 @@ func (t *Transport) write(ctx context.Context, in []byte, opts ...MessageOption)
 
 	// Twoway
 	if !m.IsOneway() {
-		t.registerAwait(seq, a)
+		t.regAwait(seq, a)
 	}
 
 	// Send message
-	go t.gogogo(a, m)
+	go t.gogo(a, m)
 
 	select {
 	// Cancel
@@ -67,18 +59,44 @@ func (t *Transport) write(ctx context.Context, in []byte, opts ...MessageOption)
 	// Done
 	case <-a.done:
 		if a.err != nil {
-			out, err = nil, a.err
-		} else if a.out != nil {
-			out = a.out.Bytes()
+			reply, err = nil, a.err
+		} else if a.ret != nil {
+			reply = a.ret.Bytes()
 		}
 	}
 
 	return
 }
 
-// gogogo
-func (t *Transport) gogogo(a *Await, m Message) {
-	if l := t.selectWorker(); l == nil {
+// Broadcast
+func (t *Transport) Broadcast(ctx context.Context, message []byte) (err error) {
+	t.locker.RLock()
+	defer t.locker.RUnlock()
+	//
+	m := t.mp.Get().(Message)
+	m.SetOneway()
+	m.Store(message)
+	m.SetSeq(t.seq())
+
+	defer func() {
+		t.mp.Put(m)
+	}()
+
+	// Broadcast
+	t.bundler.Walk(func(l *Line) {
+		l.Write(m)
+	})
+	return
+}
+
+// seq
+func (t *Transport) seq() (seq uint64) {
+	return atomic.AddUint64(&t.seqincr, 1)
+}
+
+// gogo
+func (t *Transport) gogo(a *await, m Message) {
+	if l := t.Balancer.Next(); l == nil {
 		a.Done(nil, errors.New("no worker found"))
 	} else {
 		if _, err := l.Write(m); err != nil {
@@ -89,51 +107,17 @@ func (t *Transport) gogogo(a *Await, m Message) {
 	}
 }
 
-// searchAwait
-func (t *Transport) searchAwait(seq uint64) (a *Await, ok bool) {
-	value, ok := t.pendings.LoadAndDelete(seq)
-	if ok {
-		a = value.(*Await)
-	}
-	return
-}
-
-// registerAwait
-func (t *Transport) registerAwait(seq uint64, a *Await) {
+// regAwait
+func (t *Transport) regAwait(seq uint64, a *await) {
 	t.pendings.Store(seq, a)
 }
 
-// selectWorker
-func (t *Transport) selectWorker() (l *Line) {
-	t.locker.RLock()
-	defer t.locker.RUnlock()
-	// Select a worker
-	if t.Balancer != nil {
-		l = t.Balancer.Next()
+// findAwait
+func (t *Transport) findAwait(seq uint64) (a *await) {
+	if value, ok := t.pendings.LoadAndDelete(seq); ok {
+		a = value.(*await)
 	}
 	return
-}
-
-// insertWorker
-func (t *Transport) insertWorker(l *Line, weight int) {
-	t.locker.Lock()
-	defer t.locker.Unlock()
-	// Insert new worker
-	t.workers[l] = time.Now()
-	if t.Balancer != nil {
-		t.Balancer.Add(l, weight)
-	}
-}
-
-// removeWorker
-func (t *Transport) removeWorker(l *Line) {
-	t.locker.Lock()
-	defer t.locker.Unlock()
-	// Delete a worker
-	delete(t.workers, l)
-	if t.Balancer != nil {
-		t.Balancer.Remove(l)
-	}
 }
 
 // OnTraffic
@@ -142,8 +126,7 @@ func (t *Transport) OnTraffic(l *Line, m Message) {
 	seq := m.Seq()
 
 	// Find await
-	a, ok := t.searchAwait(seq)
-	if ok {
+	if a := t.findAwait(seq); a != nil {
 		a.Done(m, nil)
 		return
 	}
@@ -171,8 +154,10 @@ func (t *Transport) OnTraffic(l *Line, m Message) {
 
 // Disconnect
 func (t *Transport) OnDisconnect(l *Line) {
-	t.removeWorker(l)
-	// Hang
+	t.bundler.Remove(l)
+	if t.Balancer != nil {
+		t.Balancer.Remove(l)
+	}
 	if t.Dialer != nil {
 		t.Dialer.Hang(l.conn)
 	}

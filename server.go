@@ -19,8 +19,8 @@ import (
 	"net"
 	"time"
 
-	"github.com/govoltron/onerpc/protocol"
-	"github.com/govoltron/onerpc/transport"
+	"github.com/thecxx/onerpc/protocol"
+	"github.com/thecxx/onerpc/transport"
 )
 
 type Server struct {

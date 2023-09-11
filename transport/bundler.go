@@ -14,39 +14,38 @@
 
 package transport
 
-// // Sender
-// type Sender struct {
-// 	// Message
-// 	message Message
+import (
+	"sync"
+	"time"
+)
 
-// 	// Reply
-// 	reply Message
+type Bundler struct {
+	lines  map[*Line]time.Time
+	locker sync.RWMutex
+}
 
-// 	// handler
-// 	handler func(reply []byte, err error)
+// Add
+func (b *Bundler) Add(l *Line) {
+	b.locker.Lock()
+	defer b.locker.Unlock()
+	// Add line
+	b.lines[l] = time.Now()
+}
 
-// 	err error
+// Remove
+func (b *Bundler) Remove(l *Line) {
+	b.locker.Lock()
+	defer b.locker.Unlock()
+	// Remove line
+	delete(b.lines, l)
+}
 
-// 	// Done signal
-// 	done chan struct{}
-// }
-
-// // Reply
-// func (s *Sender) Reply(r Message, err error) {
-// 	s.reply, s.err = r, err
-
-// 	if s.handler != nil {
-// 		s.handler(s.reply.Bytes(), err)
-// 	} else {
-// 		close(s.done)
-// 	}
-// }
-
-// // reset
-// func (s *Sender) reset() {
-// 	s.message = nil
-// 	s.reply = nil
-// 	s.handler = nil
-// 	s.err = nil
-// 	s.done = nil
-// }
+// Walk
+func (b *Bundler) Walk(fn func(l *Line)) {
+	b.locker.RLock()
+	defer b.locker.RUnlock()
+	// for-range
+	for l := range b.lines {
+		fn(l)
+	}
+}

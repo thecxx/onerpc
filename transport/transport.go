@@ -30,15 +30,17 @@ var (
 	ErrNoIdleServerFound = errors.New("no idle server found")
 )
 
-type Await struct {
-	out  Message
-	err  error
+type await struct {
+	// Return message
+	ret Message
+	err error
+	// Done signal
 	done chan struct{}
 }
 
 // Done
-func (a *Await) Done(out Message, err error) {
-	a.out = out
+func (a *await) Done(ret Message, err error) {
+	a.ret = ret
 	a.err = err
 	// Done signal
 	close(a.done)
@@ -75,10 +77,10 @@ type Transport struct {
 	Proto    Protocol
 	Handler  Handler
 	Balancer Balancer
-	// Pool
+	// Bundler
+	bundler Bundler
+	// Pools
 	ap, pp, mp sync.Pool
-	// Workers
-	workers map[*Line]time.Time
 	// Pending
 	pendings sync.Map
 	seqincr  uint64
@@ -90,50 +92,26 @@ type Transport struct {
 // Start
 func (t *Transport) Start(ctx context.Context) {
 	t.ctx, t.cancel = context.WithCancel(ctx)
-	t.workers = make(map[*Line]time.Time)
-	// Await pool
-	t.ap.New = func() interface{} { return new(Await) }
+	// Bundler
+	t.bundler.lines = make(map[*Line]time.Time)
+	// await pool
+	t.ap.New = func() interface{} { return new(await) }
 	// Packet pool
 	t.pp.New = func() interface{} { return new(Packet) }
 	// Message pool
 	t.mp.New = func() interface{} { return t.Proto.NewMessage() }
-
 	// Background goroutine
-	go t.background()
+	if t.Dialer != nil {
+		go t.background()
+	}
 }
 
 // Stop
 func (t *Transport) Stop() {
-	for c := range t.workers {
-		c.Stop()
-	}
+	t.bundler.Walk(func(l *Line) {
+		l.Stop()
+	})
 	t.cancel()
-}
-
-// Send
-func (t *Transport) Send(ctx context.Context, message []byte) (reply []byte, err error) {
-	return t.write(ctx, message)
-}
-
-// Broadcast
-func (t *Transport) Broadcast(ctx context.Context, message []byte) (err error) {
-	t.locker.RLock()
-	defer t.locker.RUnlock()
-	//
-	m := t.mp.Get().(Message)
-	m.SetOneway()
-	m.Store(message)
-	m.SetSeq(t.seq())
-
-	defer func() {
-		t.mp.Put(m)
-	}()
-
-	// Broadcast
-	for l := range t.workers {
-		l.Write(m)
-	}
-	return
 }
 
 // Join
@@ -157,21 +135,28 @@ func (t *Transport) Join(conn net.Conn, weight int, hang <-chan struct{}) {
 
 	l.Start(t.ctx)
 
-	// Insert new worker
-	t.insertWorker(l, weight)
+	// Add new line
+	t.bundler.Add(l)
+	if t.Balancer != nil {
+		t.Balancer.Add(l, weight)
+	}
 }
 
-// tryDial
-func (t *Transport) tryDial() {
+// dial
+func (t *Transport) dial() (err error) {
 	if t.Dialer == nil {
-		return
+		return errors.New("no dialer found")
 	}
 	conn, weight, hang, err := t.Dialer.Dial()
 	if err != nil {
-		// TODO
-	} else {
-		t.Join(conn, weight, hang)
+		if err == ErrNoIdleServerFound {
+			err = nil
+		}
+		return
 	}
+	// Join
+	t.Join(conn, weight, hang)
+	return
 }
 
 // background
@@ -186,7 +171,7 @@ func (t *Transport) background() {
 			return
 		// Join new connection
 		case <-tk.C:
-			t.tryDial()
+			_ = t.dial()
 		}
 	}
 }

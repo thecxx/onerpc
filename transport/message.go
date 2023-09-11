@@ -15,6 +15,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"io"
 	"sync"
@@ -88,4 +89,75 @@ func (w messageWriter) Reply(b []byte) (n int64, err error) {
 
 	// Write message
 	return w.line.Write(m)
+}
+
+type Handler interface {
+	ServePacket(w MessageWriter, p *Packet)
+}
+
+type HandleFunc func(w MessageWriter, p *Packet)
+
+func (f HandleFunc) ServePacket(w MessageWriter, p *Packet) {
+	f(w, p)
+}
+
+type Packet struct {
+	// Context
+	ctx context.Context
+
+	// Line
+	line *Line
+
+	// Message
+	message Message
+
+	// Protocol
+	proto Protocol
+
+	// Already replied
+	replied bool
+}
+
+// Seq
+func (p *Packet) Seq() uint64 {
+	return p.message.Seq()
+}
+
+// Bytes
+func (p *Packet) Bytes() []byte {
+	return p.message.Bytes()
+}
+
+// IsOneway
+func (p *Packet) IsOneway() bool {
+	return p.message.IsOneway()
+}
+
+// setReplied
+func (p *Packet) setReplied() {
+	p.replied = true
+}
+
+// IsReplied
+func (p *Packet) IsReplied() bool {
+	return p.replied
+}
+
+// Protocol returns the protocol version.
+func (p *Packet) Protocol() string {
+	return p.proto.Version()
+}
+
+// Done
+func (p *Packet) Done() <-chan struct{} {
+	return p.ctx.Done()
+}
+
+// reset
+func (p *Packet) reset() {
+	p.ctx = nil
+	p.line = nil
+	p.message = nil
+	p.proto = nil
+	p.replied = false
 }
