@@ -16,11 +16,15 @@ package onerpc
 
 import (
 	"time"
-
-	"github.com/thecxx/onerpc/transport"
 )
 
 type CanOption interface {
+
+	// SetProtocol
+	SetProtocol(p Protocol)
+
+	// SetBalancer
+	SetBalancer(b Balancer)
 
 	// SetReadTimeout
 	SetReadTimeout(timeout time.Duration)
@@ -39,15 +43,19 @@ type CanOption interface {
 
 	// SetWriterBufferSize
 	SetWriterBufferSize(size int)
-
-	// SetProtocol
-	SetProtocol(p transport.Protocol)
-
-	// SetBalancer
-	SetBalancer(b transport.Balancer)
 }
 
 type Option func(setter CanOption)
+
+// WithProtocol
+func WithProtocol(p Protocol) Option {
+	return func(setter CanOption) { setter.SetProtocol(p) }
+}
+
+// WithBalancer
+func WithBalancer(b Balancer) Option {
+	return func(setter CanOption) { setter.SetBalancer(b) }
+}
 
 // WithReadTimeout
 func WithReadTimeout(timeout time.Duration) Option {
@@ -77,14 +85,4 @@ func WithReaderBufferSize(size int) Option {
 // WithWriterBufferSize
 func WithWriterBufferSize(size int) Option {
 	return func(setter CanOption) { setter.SetWriterBufferSize(size) }
-}
-
-// WithProtocol
-func WithProtocol(p transport.Protocol) Option {
-	return func(setter CanOption) { setter.SetProtocol(p) }
-}
-
-// WithBalancer
-func WithBalancer(b transport.Balancer) Option {
-	return func(setter CanOption) { setter.SetBalancer(b) }
 }

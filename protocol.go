@@ -15,14 +15,41 @@
 package onerpc
 
 import (
-	"context"
+	"io"
 )
 
-type Caller struct {
-	// client *Client
+type Message interface {
+
+	// Bytes
+	Bytes() []byte
+
+	// Store
+	Store(data []byte)
+
+	// Seq gets the sequence number
+	Seq() uint64
+
+	// SetSeq sets the sequence number
+	SetSeq(seq uint64)
+
+	// IsOneway
+	IsOneway() bool
+
+	// SetOneway
+	SetOneway()
+
+	// Read reads the packet from r
+	ReadFrom(r io.Reader) (n int64, err error)
+
+	// Write writes the packet into w
+	WriteTo(w io.Writer) (n int64, err error)
 }
 
-// Call
-func (c *Caller) Call(ctx context.Context) {
-	// c.client.Send(ctx, nil)
+type Protocol interface {
+
+	// Version
+	Version() string
+
+	// NewMessage returns a new message.
+	NewMessage() (m Message)
 }

@@ -20,7 +20,7 @@ import (
 	"io"
 	"math"
 
-	"github.com/thecxx/onerpc/transport"
+	"github.com/thecxx/onerpc"
 )
 
 const (
@@ -244,6 +244,6 @@ func (p *Protocol) Version() string {
 }
 
 // NewMessage
-func (p *Protocol) NewMessage() (m transport.Message) {
+func (p *Protocol) NewMessage() (m onerpc.Message) {
 	return NewMessage()
 }

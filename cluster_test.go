@@ -23,31 +23,31 @@ import (
 	"github.com/thecxx/onerpc"
 	"github.com/thecxx/onerpc/link"
 	"github.com/thecxx/onerpc/middleware"
-	"github.com/thecxx/onerpc/transport"
+	"github.com/thecxx/onerpc/protocol"
 )
 
-func TestCluster_Send(t *testing.T) {
-	cluster := onerpc.NewCluster()
-	// d, err := onerpc.NewEtcdDiscovery()
-	client := onerpc.NewClient(
-		// client.DirectDial("tcp", "127.0.0.1:80"),
-		cluster.NewServiceDialer("user-core-service", 1*time.Second),
-	)
-	err := client.Connect()
-	if err != nil {
-		return
-	}
-	defer client.Close()
+// func TestCluster_Send(t *testing.T) {
+// 	cluster := onerpc.NewCluster()
+// 	// d, err := onerpc.NewEtcdDiscovery()
+// 	client := onerpc.NewClient(
+// 		// client.DirectDial("tcp", "127.0.0.1:80"),
+// 		cluster.NewServiceDialer("user-core-service", 1*time.Second),
+// 	)
+// 	err := client.Connect()
+// 	if err != nil {
+// 		return
+// 	}
+// 	defer client.Close()
 
-	// client.Send(context.TODO(), protocol.NewPacket())
-}
+// 	// client.Send(context.TODO(), protocol.NewPacket())
+// }
 
 func TestServer_Start(t *testing.T) {
 	// cluster := onerpc.NewCluster()
 
 	server := onerpc.NewServer(
 		link.NewDirectListener("tcp", "127.0.0.1:8080"),
-		// cluster.NewServiceListener("user-core-service", "tcp", "127.0.0.1:8080", 100),
+		onerpc.WithProtocol(protocol.NewProtocol()),
 	)
 	err := server.Listen()
 	if err != nil {
@@ -58,7 +58,7 @@ func TestServer_Start(t *testing.T) {
 
 	server.Use(middleware.WithACL)
 
-	server.HandleFunc(func(w transport.MessageWriter, p *transport.Packet) {
+	server.HandleFunc(func(w onerpc.MessageWriter, p *onerpc.Packet) {
 		fmt.Printf("OnPacket OK: %+v\n", string(p.Bytes()))
 
 		go func() {
@@ -76,7 +76,7 @@ func TestServer_Start(t *testing.T) {
 func TestClient_Send(t *testing.T) {
 	client := onerpc.NewClient(
 		link.NewDirectDialer("tcp", "127.0.0.1:8080"),
-		onerpc.WithBalancer(transport.NewWeightRoundRobinBalancer()),
+		onerpc.WithProtocol(protocol.NewProtocol()),
 	)
 	err := client.Connect()
 	if err != nil {
@@ -85,7 +85,7 @@ func TestClient_Send(t *testing.T) {
 	}
 	defer client.Close()
 
-	client.HandleFunc(func(w transport.MessageWriter, p *transport.Packet) {
+	client.HandleFunc(func(w onerpc.MessageWriter, p *onerpc.Packet) {
 		if p.IsOneway() {
 			fmt.Printf("OnPacket oneway\n")
 		}

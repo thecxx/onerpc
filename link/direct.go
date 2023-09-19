@@ -18,8 +18,10 @@ import (
 	"errors"
 	"net"
 	"time"
+)
 
-	"github.com/thecxx/onerpc/transport"
+var (
+	ErrNoIdleServerFound = errors.New("no idle server found")
 )
 
 type DirectListener struct {
@@ -74,14 +76,14 @@ func NewDirectDialerWithTimeout(timeout time.Duration, network string, addrs ...
 	return
 }
 
-// Dial implements transport.Dialer.
+// Dial
 func (d *DirectDialer) Dial() (conn net.Conn, weight int, hang <-chan struct{}, err error) {
 	for _, contact := range d.contacts {
 		if contact.conn == nil {
 			return d.dial(contact)
 		}
 	}
-	return nil, 0, nil, errors.New("no idle contact found")
+	return nil, 0, nil, ErrNoIdleServerFound
 }
 
 // dial
@@ -89,12 +91,12 @@ func (d *DirectDialer) dial(contact *DirectContact) (conn net.Conn, weight int, 
 	contact.conn, err = net.DialTimeout(d.network, contact.addr, d.timeout)
 	if err == nil {
 		contact.hang = make(chan struct{})
-		return contact.conn, transport.WeightNormal, contact.hang, nil
+		return contact.conn, 100, contact.hang, nil
 	}
 	return
 }
 
-// Hang implements transport.Dialer.
+// Hang
 func (d *DirectDialer) Hang(conn net.Conn) {
 	for _, contact := range d.contacts {
 		if contact.conn != nil && contact.conn == conn {

@@ -18,28 +18,30 @@ import (
 	"context"
 	"net"
 	"time"
-
-	"github.com/thecxx/onerpc/protocol"
-	"github.com/thecxx/onerpc/transport"
 )
 
 type Server struct {
-	transport   transport.Transport
-	listener    transport.Listener
-	handler     transport.Handler
-	middlewares []func(next transport.Handler) transport.Handler
-	ctx         context.Context
-	cancel      context.CancelFunc
+	transport   Transport
+	listener    Listener
+	handler     Handler
+	middlewares []func(next Handler) Handler
+	// Context
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewServer
-func NewServer(listener transport.Listener, opts ...Option) (s *Server) {
+func NewServer(listener Listener, opts ...Option) (s *Server) {
 	s = &Server{
 		listener: listener,
 	}
 	// Set options
 	for _, setOpt := range opts {
 		setOpt(s)
+	}
+	// Option: Protocol
+	if s.transport.Proto == nil {
+		panic("invalid protocol for server")
 	}
 	// Option: ReadTimeout
 	if s.transport.ReadTimeout < 0 {
@@ -65,14 +67,20 @@ func NewServer(listener transport.Listener, opts ...Option) (s *Server) {
 	if s.transport.WriterBufferSize < 0 {
 		s.transport.WriterBufferSize = 10 * 1024
 	}
-	// Option: Protocol
-	if s.transport.Proto == nil {
-		s.transport.Proto = protocol.NewProtocol()
-	}
 
 	s.transport.Handler = s
 
 	return
+}
+
+// SetProtocol implements CanOption.
+func (s *Server) SetProtocol(p Protocol) {
+	s.transport.Proto = p
+}
+
+// SetBalancer implements CanOption.
+func (s *Server) SetBalancer(b Balancer) {
+	panic("option 'Balancer' not supported")
 }
 
 // SetReadTimeout implements CanOption.
@@ -105,18 +113,8 @@ func (s *Server) SetWriterBufferSize(size int) {
 	s.transport.WriterBufferSize = size
 }
 
-// SetProtocol implements CanOption.
-func (s *Server) SetProtocol(p transport.Protocol) {
-	s.transport.Proto = p
-}
-
-// SetBalancer implements CanOption.
-func (s *Server) SetBalancer(b transport.Balancer) {
-	panic("option 'Balancer' not supported")
-}
-
 // ServePacket
-func (s *Server) ServePacket(w transport.MessageWriter, p *transport.Packet) {
+func (s *Server) ServePacket(w MessageWriter, p *Packet) {
 	if s.handler != nil {
 		s.handler.ServePacket(w, p)
 	}
@@ -131,7 +129,7 @@ func (s *Server) Listen() (err error) {
 
 	// Start Transport
 	s.ctx, s.cancel = context.WithCancel(context.Background())
-	s.transport.Start(s.ctx)
+	s.transport.Ctx = s.ctx
 
 	// Handle remote connect
 	go s.handleRemoteConnect(ln)
@@ -140,7 +138,7 @@ func (s *Server) Listen() (err error) {
 }
 
 // Handle
-func (s *Server) Handle(handler transport.Handler) {
+func (s *Server) Handle(handler Handler) {
 	for i := len(s.middlewares) - 1; i >= 0; i-- {
 		handler = s.middlewares[i](handler)
 	}
@@ -148,12 +146,12 @@ func (s *Server) Handle(handler transport.Handler) {
 }
 
 // HandleFunc
-func (s *Server) HandleFunc(handler func(w transport.MessageWriter, p *transport.Packet)) {
-	s.Handle(transport.HandleFunc(handler))
+func (s *Server) HandleFunc(handler func(w MessageWriter, p *Packet)) {
+	s.Handle(HandleFunc(handler))
 }
 
 // Use
-func (s *Server) Use(middleware func(next transport.Handler) transport.Handler) {
+func (s *Server) Use(middleware func(next Handler) Handler) {
 	s.middlewares = append(s.middlewares, middleware)
 }
 
@@ -164,7 +162,6 @@ func (s *Server) Broadcast(ctx context.Context, message []byte) (err error) {
 
 // Close
 func (s *Server) Close() {
-	s.transport.Stop()
 	s.cancel()
 }
 
@@ -174,7 +171,7 @@ func (s *Server) handleRemoteConnect(ln net.Listener) {
 		if conn, err := ln.Accept(); err != nil {
 			break
 		} else {
-			s.transport.Join(conn, transport.WeightNormal, nil)
+			s.transport.Join(conn, 100, nil)
 		}
 	}
 }

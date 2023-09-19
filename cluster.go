@@ -14,78 +14,78 @@
 
 package onerpc
 
-import (
-	"net"
-	"time"
-)
+// import (
+// 	"net"
+// 	"time"
+// )
 
-type ClusterDialer struct {
-	srvname string
-	timeout time.Duration
-	cluster *Cluster
-}
-
-// Dial implements transport.Dialer.
-func (d *ClusterDialer) Dial() (conn net.Conn, weight int, hang <-chan struct{}, err error) {
-	return
-}
-
-// Hang implements transport.Dialer.
-func (d *ClusterDialer) Hang(conn net.Conn) {
-
-}
-
-type ClusterListener struct {
-	srvname string
-	network string
-	addr    string
-	weight  int
-	cluster *Cluster
-}
-
-// Listen implements transport.Listener.
-func (l *ClusterListener) Listen() (ln net.Listener, err error) {
-	return
-}
-
-type Cluster struct {
-	discovery Discovery
-}
-
-// NewCluster
-func NewCluster() (c *Cluster) {
-	return &Cluster{
-		discovery: nil,
-	}
-}
-
-// NewServiceDialer
-func (c *Cluster) NewServiceDialer(srvname string, timeout time.Duration) (d *ClusterDialer) {
-	return &ClusterDialer{srvname: srvname, timeout: timeout}
-}
-
-// NewServiceListener
-func (c *Cluster) NewServiceListener(srvname, network, addr string, weight int) (l *ClusterListener) {
-	return &ClusterListener{srvname: srvname, network: network, addr: addr, weight: weight}
-}
-
-// func (c *Cluster) call(srvname string, in []byte) {
-// 	seq := int64(0)
-// 	sf := new(stackframe)
-// 	sf.push(in)
-// 	sf.push("xxx")
-// 	sf.push(seq)
-// 	sf.push((int)(0))
-// 	sf.push((error)(nil))
-
+// type ClusterDialer struct {
+// 	srvname string
+// 	timeout time.Duration
+// 	cluster *Cluster
 // }
 
-// func (c *Cluster) send(srvname string, buff []byte) (pk *packet, err error) {
-
-// 	pk = &packet{
-// 		Buff: buff,
-// 		Done: make(chan struct{}),
-// 	}
-
+// // Dial implements transport.Dialer.
+// func (d *ClusterDialer) Dial() (conn net.Conn, weight int, hang <-chan struct{}, err error) {
 // 	return
 // }
+
+// // Hang implements transport.Dialer.
+// func (d *ClusterDialer) Hang(conn net.Conn) {
+
+// }
+
+// type ClusterListener struct {
+// 	srvname string
+// 	network string
+// 	addr    string
+// 	weight  int
+// 	cluster *Cluster
+// }
+
+// // Listen implements transport.Listener.
+// func (l *ClusterListener) Listen() (ln net.Listener, err error) {
+// 	return
+// }
+
+// type Cluster struct {
+// 	discovery Discovery
+// }
+
+// // NewCluster
+// func NewCluster() (c *Cluster) {
+// 	return &Cluster{
+// 		discovery: nil,
+// 	}
+// }
+
+// // NewServiceDialer
+// func (c *Cluster) NewServiceDialer(srvname string, timeout time.Duration) (d *ClusterDialer) {
+// 	return &ClusterDialer{srvname: srvname, timeout: timeout}
+// }
+
+// // NewServiceListener
+// func (c *Cluster) NewServiceListener(srvname, network, addr string, weight int) (l *ClusterListener) {
+// 	return &ClusterListener{srvname: srvname, network: network, addr: addr, weight: weight}
+// }
+
+// // func (c *Cluster) call(srvname string, in []byte) {
+// // 	seq := int64(0)
+// // 	sf := new(stackframe)
+// // 	sf.push(in)
+// // 	sf.push("xxx")
+// // 	sf.push(seq)
+// // 	sf.push((int)(0))
+// // 	sf.push((error)(nil))
+
+// // }
+
+// // func (c *Cluster) send(srvname string, buff []byte) (pk *packet, err error) {
+
+// // 	pk = &packet{
+// // 		Buff: buff,
+// // 		Done: make(chan struct{}),
+// // 	}
+
+// // 	return
+// // }

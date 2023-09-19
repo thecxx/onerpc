@@ -14,30 +14,42 @@
 
 package onerpc
 
-type stackframe struct {
-	top   int
-	units []interface{}
+import (
+	"sync"
+	"time"
+)
+
+type CGroup struct {
+	locker  sync.RWMutex
+	workers map[*Connection]time.Time
 }
 
-func (s *stackframe) encode() (raw []byte, err error) { return }
-func (s *stackframe) decode(raw []byte) (err error)   { return }
-
-// push
-func (s *stackframe) push(value interface{}) {
-	if s.units == nil {
-		s.top = -1
-		s.units = make([]interface{}, 0)
+// Add
+func (b *CGroup) Add(c *Connection) {
+	b.locker.Lock()
+	defer b.locker.Unlock()
+	// If emtry
+	if b.workers == nil {
+		b.workers = make(map[*Connection]time.Time)
 	}
-	s.units = append(s.units, value)
-	s.top++
+	// Add connection
+	b.workers[c] = time.Now()
 }
 
-// pop
-func (s *stackframe) pop() (value interface{}, ok bool) {
-	if s.top < 0 {
-		return nil, false
+// Remove
+func (b *CGroup) Remove(c *Connection) {
+	b.locker.Lock()
+	defer b.locker.Unlock()
+	// Remove connection
+	delete(b.workers, c)
+}
+
+// Walk
+func (b *CGroup) Range(fn func(c *Connection)) {
+	b.locker.RLock()
+	defer b.locker.RUnlock()
+	// for-range
+	for l := range b.workers {
+		fn(l)
 	}
-	value = s.units[s.top]
-	s.top--
-	return
 }

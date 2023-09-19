@@ -17,11 +17,11 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/thecxx/onerpc/transport"
+	"github.com/thecxx/onerpc"
 )
 
-func WithACL(next transport.Handler) transport.Handler {
-	return transport.HandleFunc(func(w transport.MessageWriter, p *transport.Packet) {
+func WithACL(next onerpc.Handler) onerpc.Handler {
+	return onerpc.HandleFunc(func(w onerpc.MessageWriter, p *onerpc.Packet) {
 		if true {
 
 			fmt.Printf("Protocol: %s => %s\n", p.Protocol(), string(p.Bytes()))

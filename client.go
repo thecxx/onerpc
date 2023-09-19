@@ -17,30 +17,34 @@ package onerpc
 import (
 	"context"
 	"time"
-
-	"github.com/thecxx/onerpc/protocol"
-	"github.com/thecxx/onerpc/transport"
 )
 
 type Client struct {
-	// Transport
-	transport   transport.Transport
-	dialer      transport.Dialer
-	handler     transport.Handler
-	middlewares []func(next transport.Handler) transport.Handler
+	transport   Transport
+	dialer      Dialer
+	handler     Handler
+	middlewares []func(next Handler) Handler
 	// Context
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 // NewClient
-func NewClient(dialer transport.Dialer, opts ...Option) (c *Client) {
+func NewClient(dialer Dialer, opts ...Option) (c *Client) {
 	c = &Client{
 		dialer: dialer,
 	}
 	// Set options
 	for _, setOpt := range opts {
 		setOpt(c)
+	}
+	// Option: Protocol
+	if c.transport.Proto == nil {
+		panic("invalid protocol for client")
+	}
+	// Option: Balancer
+	if c.transport.Balancer == nil {
+		c.transport.Balancer = NewRoundRobinBalancer()
 	}
 	// Option: ReadTimeout
 	if c.transport.ReadTimeout < 0 {
@@ -66,18 +70,20 @@ func NewClient(dialer transport.Dialer, opts ...Option) (c *Client) {
 	if c.transport.WriterBufferSize < 0 {
 		c.transport.WriterBufferSize = 10 * 1024
 	}
-	// Option: Protocol
-	if c.transport.Proto == nil {
-		c.transport.Proto = protocol.NewProtocol()
-	}
-	// Option: Balancer
-	if c.transport.Balancer == nil {
-		c.transport.Balancer = transport.NewRoundRobinBalancer()
-	}
 
 	c.transport.Handler = c
 
 	return
+}
+
+// SetProtocol implements CanOption.
+func (c *Client) SetProtocol(p Protocol) {
+	c.transport.Proto = p
+}
+
+// SetBalancer implements CanOption.
+func (c *Client) SetBalancer(b Balancer) {
+	c.transport.Balancer = b
 }
 
 // SetReadTimeout implements CanOption.
@@ -110,18 +116,8 @@ func (c *Client) SetWriterBufferSize(size int) {
 	c.transport.WriterBufferSize = size
 }
 
-// SetProtocol implements CanOption.
-func (c *Client) SetProtocol(p transport.Protocol) {
-	c.transport.Proto = p
-}
-
-// SetBalancer implements CanOption.
-func (c *Client) SetBalancer(b transport.Balancer) {
-	c.transport.Balancer = b
-}
-
 // ServePacket
-func (c *Client) ServePacket(w transport.MessageWriter, p *transport.Packet) {
+func (c *Client) ServePacket(w MessageWriter, p *Packet) {
 	if c.handler != nil {
 		c.handler.ServePacket(w, p)
 	}
@@ -138,7 +134,7 @@ func (c *Client) Connect() (err error) {
 
 	// Start Transport
 	c.ctx, c.cancel = context.WithCancel(context.Background())
-	c.transport.Start(c.ctx)
+	c.transport.Ctx = c.ctx
 
 	// First connection
 	c.transport.Join(conn, weight, hang)
@@ -147,7 +143,7 @@ func (c *Client) Connect() (err error) {
 }
 
 // Handle
-func (c *Client) Handle(handler transport.Handler) {
+func (c *Client) Handle(handler Handler) {
 	for i := len(c.middlewares) - 1; i >= 0; i-- {
 		handler = c.middlewares[i](handler)
 	}
@@ -155,12 +151,12 @@ func (c *Client) Handle(handler transport.Handler) {
 }
 
 // HandleFunc
-func (c *Client) HandleFunc(handler func(w transport.MessageWriter, p *transport.Packet)) {
-	c.handler = transport.HandleFunc(handler)
+func (c *Client) HandleFunc(handler func(w MessageWriter, p *Packet)) {
+	c.handler = HandleFunc(handler)
 }
 
 // Use
-func (c *Client) Use(middleware func(next transport.Handler) transport.Handler) {
+func (c *Client) Use(middleware func(next Handler) Handler) {
 	c.middlewares = append(c.middlewares, middleware)
 }
 
@@ -171,5 +167,5 @@ func (c *Client) Send(ctx context.Context, message []byte) (reply []byte, err er
 
 // Close
 func (c *Client) Close() {
-	c.transport.Stop()
+	c.cancel()
 }
