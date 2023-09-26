@@ -15,50 +15,12 @@
 package onerpc
 
 import (
-	"io"
+	"sync/atomic"
 )
 
-type Message interface {
+type sequence uint64
 
-	// Sequence number
-	Seq() uint64
-
-	// Set sequence number
-	SetSeq(number uint64)
-
-	// NeedReply
-	NeedReply() (need bool)
-
-	// DoNotReply
-	DoNotReply()
-
-	// Bytes
-	Bytes() (b []byte)
-
-	// Store
-	Store(buff []byte)
-
-	// ReadFrom
-	ReadFrom(r io.Reader) (n int64, err error)
-
-	// WriteTo
-	WriteTo(w io.Writer) (n int64, err error)
-}
-
-type SimpleMessage interface {
-
-	// Sequence number
-	Seq() uint64
-
-	// NeedReply
-	NeedReply() (need bool)
-
-	// Bytes
-	Bytes() (b []byte)
-}
-
-type Protocol interface {
-
-	// NewMessage
-	NewMessage() (message Message)
+// Next
+func (s *sequence) Next() uint64 {
+	return atomic.AddUint64((*uint64)(s), 1)
 }

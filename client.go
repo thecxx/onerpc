@@ -24,6 +24,8 @@ type Client struct {
 	dialer   Dialer
 	protocol Protocol
 	balancer Balancer
+	handler  Handler
+	sequence sequence
 	cancel   func()
 }
 
@@ -67,6 +69,17 @@ func (c *Client) Connect() (err error) {
 	return
 }
 
+// Send
+func (c *Client) Send(ctx context.Context, m []byte) (r []byte, err error) {
+
+	message := newMessage(c.protocol, m)
+	message.SetSeq(c.sequence.Next())
+
+	sendMessage(ctx, nil, message)
+
+	return
+}
+
 // Close
 func (c *Client) Close() {
 	if c.cancel != nil {
@@ -96,4 +109,40 @@ func (c *Client) join(ctx context.Context, conn net.Conn, weight int, hang <-cha
 // handleMessage
 func (c *Client) handleMessage(cc *Connection, message Message) {
 
+	// Handle reply
+	if c.handleReply(cc, message) {
+		return
+	}
+
+	var sent = false
+	var writer = new(messageWriter)
+
+	// Send message
+	writer.send = func(b []byte) error {
+		if sent {
+			return errors.New("already sent")
+		}
+		defer func() {
+			sent = true
+		}()
+
+		if !message.NeedReply() {
+			return errors.New("no reply needed")
+		}
+
+		message := newMessage(c.protocol, b)
+		// Set same sequence number
+		message.SetSeq(message.Seq())
+
+		return sendMessage(context.TODO(), cc, message)
+	}
+
+	c.handler.ServeMessage(writer, message)
+}
+
+// handleReply
+func (c *Client) handleReply(cc *Connection, message Message) (handled bool) {
+
+	// seq := message.Seq()
+	return
 }

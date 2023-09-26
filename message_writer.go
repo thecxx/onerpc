@@ -15,50 +15,27 @@
 package onerpc
 
 import (
-	"io"
+	"context"
 )
 
-type Message interface {
-
-	// Sequence number
-	Seq() uint64
-
-	// Set sequence number
-	SetSeq(number uint64)
-
-	// NeedReply
-	NeedReply() (need bool)
-
-	// DoNotReply
-	DoNotReply()
-
-	// Bytes
-	Bytes() (b []byte)
-
-	// Store
-	Store(buff []byte)
-
-	// ReadFrom
-	ReadFrom(r io.Reader) (n int64, err error)
-
-	// WriteTo
-	WriteTo(w io.Writer) (n int64, err error)
+type messageWriter struct {
+	send func([]byte) error
 }
 
-type SimpleMessage interface {
-
-	// Sequence number
-	Seq() uint64
-
-	// NeedReply
-	NeedReply() (need bool)
-
-	// Bytes
-	Bytes() (b []byte)
+// Send
+func (w messageWriter) Send(b []byte) (err error) {
+	return w.send(b)
 }
 
-type Protocol interface {
+// newMessage
+func newMessage(proto Protocol, b []byte) (message Message) {
+	message = proto.NewMessage()
+	message.Store(b)
+	return
+}
 
-	// NewMessage
-	NewMessage() (message Message)
+// sendMessage
+func sendMessage(ctx context.Context,
+	cc *Connection, message Message) (err error) {
+	return cc.Send(ctx, message)
 }

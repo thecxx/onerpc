@@ -39,38 +39,38 @@ type Connection struct {
 }
 
 // Run
-func (c *Connection) Run(ctx context.Context,
+func (cc *Connection) Run(ctx context.Context,
 	fn func(c *Connection, message Message)) (err error) {
 
 	if fn == nil {
 		return errors.New("invalid message handler")
 	}
 
-	if c.Proto == nil {
+	if cc.Proto == nil {
 		return errors.New("invalid message protocol")
 	}
 
-	atomic.StoreUint32(&c.running, 1)
-	defer atomic.StoreUint32(&c.running, 0)
+	atomic.StoreUint32(&cc.running, 1)
+	defer atomic.StoreUint32(&cc.running, 0)
 
-	var r = c.Conn
+	var r = cc.Conn
 	var m Message
 
 	for {
 		// Scan message
-		if m, err = c.scan(r); err != nil {
+		if m, err = cc.scan(r); err != nil {
 			break
 		}
 
 		// Handle message
-		fn(c, m)
+		fn(cc, m)
 
 		select {
 		// Cancel
 		case <-ctx.Done():
 			err = ctx.Err()
 		// Hang up
-		case <-c.Hang:
+		case <-cc.Hang:
 			err = ErrConnectionHangUp
 		}
 
@@ -83,20 +83,20 @@ func (c *Connection) Run(ctx context.Context,
 }
 
 // Send
-func (c *Connection) Send(ctx context.Context, message Message) (err error) {
-	if atomic.LoadUint32(&c.running) == 0 {
+func (cc *Connection) Send(ctx context.Context, message Message) (err error) {
+	if atomic.LoadUint32(&cc.running) == 0 {
 		return errors.New("connection is not running")
 	}
-	c.locker.Lock()
-	defer c.locker.Unlock()
+	cc.locker.Lock()
+	defer cc.locker.Unlock()
 	// Send
-	_, err = message.WriteTo(c.Conn)
+	_, err = message.WriteTo(cc.Conn)
 	return
 }
 
 // scan
-func (c *Connection) scan(r io.Reader) (message Message, err error) {
-	message = c.Proto.NewMessage()
+func (cc *Connection) scan(r io.Reader) (message Message, err error) {
+	message = cc.Proto.NewMessage()
 	// Read message
 	_, err = message.ReadFrom(r)
 	return

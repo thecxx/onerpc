@@ -16,6 +16,7 @@ package onerpc
 
 import (
 	"context"
+	"errors"
 	"net"
 )
 
@@ -24,6 +25,7 @@ type Server struct {
 	protocol Protocol
 	handler  Handler
 	group    Group
+	sequence sequence
 	cancel   func()
 }
 
@@ -88,5 +90,30 @@ func (s *Server) join(ctx context.Context, conn net.Conn) {
 
 // handleMessage
 func (s *Server) handleMessage(cc *Connection, message Message) {
-	s.handler.ServeMessage(nil, message)
+	var (
+		sent   = false
+		writer = new(messageWriter)
+	)
+
+	// Send message
+	writer.send = func(b []byte) error {
+		if sent {
+			return errors.New("already sent")
+		}
+		defer func() {
+			sent = true
+		}()
+
+		if !message.NeedReply() {
+			return errors.New("no reply needed")
+		}
+
+		message := newMessage(s.protocol, b)
+		// Set same sequence number
+		message.SetSeq(message.Seq())
+
+		return sendMessage(context.TODO(), cc, message)
+	}
+
+	s.handler.ServeMessage(writer, message)
 }

@@ -24,18 +24,17 @@ type MessageWriter interface {
 	Send(b []byte) (err error)
 }
 
-type messageWriter struct {
-	cc   *Connection
-	sent bool
-}
-
-// Send
-func (w *messageWriter) Send(b []byte) (err error) {
-	return
-}
-
 type Handler interface {
-	ServeMessage(writer MessageWriter, message Message)
+
+	// ServeMessage
+	ServeMessage(w MessageWriter, m SimpleMessage)
+}
+
+type HandleFunc func(w MessageWriter, m SimpleMessage)
+
+// ServeMessage
+func (f HandleFunc) ServeMessage(w MessageWriter, m SimpleMessage) {
+	f(w, m)
 }
 
 type Dialer interface {
